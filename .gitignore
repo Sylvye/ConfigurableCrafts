@@ -1,0 +1,19 @@
+.gradle/
+build/
+out/
+
+# IDE files
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+
+# Logs and local runtime state
+*.log
+logs/
+crash-reports/
+
+# OS files
+.DS_Store
+Thumbs.db
