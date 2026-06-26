@@ -86,9 +86,6 @@ public final class RecipeRepository {
 
     private IngredientSpec readIngredient(ConfigurationSection section) {
         ItemStack sample = section.getItemStack("sample");
-        if (sample == null || sample.getType().isAir()) {
-            return null;
-        }
         IngredientSpec spec = new IngredientSpec();
         spec.setSample(sample);
         spec.setLogic(section.getString("logic", "all"));
@@ -104,6 +101,10 @@ public final class RecipeRepository {
         }
         spec.setLoreContains(section.getString("lore-contains", ""));
         spec.setTagKey(section.getString("tag", ""));
+        spec.normalizeMatchers();
+        if (spec.isEmpty()) {
+            return null;
+        }
         ConfigurationSection enchantments = section.getConfigurationSection("enchantments");
         if (enchantments != null) {
             for (String key : enchantments.getKeys(false)) {
@@ -145,7 +146,9 @@ public final class RecipeRepository {
     }
 
     private void writeIngredient(ConfigurationSection section, IngredientSpec spec) {
-        section.set("sample", spec.sample());
+        if (!spec.isTagOnly()) {
+            section.set("sample", spec.sample());
+        }
         section.set("logic", spec.logic());
         section.set("matchers", spec.matchers().stream().map(Enum::name).toList());
         section.set("lore-contains", spec.loreContains());

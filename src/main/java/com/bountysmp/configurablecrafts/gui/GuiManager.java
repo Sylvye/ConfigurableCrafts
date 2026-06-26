@@ -18,7 +18,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
-import org.bukkit.Tag;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -51,6 +50,16 @@ public final class GuiManager implements Listener {
     };
     private static final int[] GRID_SLOTS = {10, 11, 12, 19, 20, 21, 28, 29, 30};
     private static final int RESULT_SLOT = 24;
+    private static final int TYPE_PICKER_BACK_SLOT = 49;
+    private static final WorkstationOption[] WORKSTATION_OPTIONS = {
+        new WorkstationOption(28, Material.BREWING_STAND, "Brewing", "Potion ingredient recipes."),
+        new WorkstationOption(29, Material.FURNACE, "Smelting", "Furnace input and output recipes."),
+        new WorkstationOption(30, Material.SMOKER, "Smoking", "Food cooking recipes."),
+        new WorkstationOption(31, Material.BLAST_FURNACE, "Blasting", "Ore and metal processing recipes."),
+        new WorkstationOption(32, Material.CAMPFIRE, "Campfire Cooking", "Campfire cooking recipes."),
+        new WorkstationOption(33, Material.STONECUTTER, "Stonecutting", "Stonecutter conversion recipes."),
+        new WorkstationOption(34, Material.SMITHING_TABLE, "Smithing", "Template and upgrade recipes.")
+    };
 
     private final Plugin plugin;
     private final ManagedRecipeRegistry registry;
@@ -235,7 +244,12 @@ public final class GuiManager implements Listener {
             openEditor(player, new EditorSession(ManagedRecipe.createCustom(RecipeKind.SHAPELESS), false));
             return;
         }
-        if (slot == 26) {
+        WorkstationOption workstation = workstationOption(slot);
+        if (workstation != null) {
+            player.sendMessage(workstation.name() + " recipes are not editable yet.");
+            return;
+        }
+        if (slot == TYPE_PICKER_BACK_SLOT) {
             openMain(player, 0, "");
         }
     }
@@ -311,7 +325,12 @@ public final class GuiManager implements Listener {
         if (session.readOnly()) {
             return;
         }
-        if (session.selectedSlot() >= 0) {
+        if (hasSelectedTagIngredient(session) && slot == 41) {
+            session.setSelectedSlot(-1);
+            renderEditor(player, session, player.getOpenInventory().getTopInventory());
+            return;
+        }
+        if (hasSelectedItemIngredient(session)) {
             handleMatcherClick(player, session, slot);
         } else {
             handleConditionClick(player, session, slot);
@@ -325,7 +344,18 @@ public final class GuiManager implements Listener {
         if (session.readOnly()) {
             return;
         }
-        if (!resultSlot && event.getClick().isRightClick() && GuiUtil.isEmpty(cursor) && !GuiUtil.isEmpty(slotItem)) {
+        if (!resultSlot && event.getClick().isRightClick() && GuiUtil.isEmpty(cursor)) {
+            if (GuiUtil.isEmpty(slotItem)) {
+                IngredientSpec spec = session.recipe().ingredient(ingredientIndex);
+                if (spec != null && spec.isTagOnly()) {
+                    session.recipe().setIngredient(ingredientIndex, null);
+                    session.setSelectedSlot(-1);
+                    renderEditor(player, session, event.getView().getTopInventory());
+                } else {
+                    promptTagEditor(player, session, ingredientIndex, new IngredientSpec());
+                }
+                return;
+            }
             session.setSelectedSlot(ingredientIndex);
             renderEditor(player, session, event.getView().getTopInventory());
             return;
@@ -398,7 +428,7 @@ public final class GuiManager implements Listener {
         int selected = session.selectedSlot();
         IngredientSpec spec = ensureSelectedSpec(session);
         if (spec == null) {
-            player.sendMessage("Select a filled ingredient slot first.");
+            player.sendMessage("Select an ingredient slot first.");
             return;
         }
         if (slot == 14) {
@@ -408,30 +438,15 @@ public final class GuiManager implements Listener {
         } else if (slot == 16) {
             toggle(spec, MatcherType.ITEM_NAME);
         } else if (slot == 23) {
-            promptEditor(player, session, "Type lore text to require, or blank to clear.", text -> {
+            promptEditor(player, session, "Type lore text to require. Type clear to remove the lore requirement.", text -> {
                 if (!text.equalsIgnoreCase("cancel")) {
-                    spec.setLoreContains(text.isBlank() ? "" : text);
-                    spec.setMatcher(MatcherType.LORE_CONTAINS, !text.isBlank());
+                    boolean clear = text.equalsIgnoreCase("clear");
+                    spec.setLoreContains(clear ? "" : text);
+                    spec.setMatcher(MatcherType.LORE_CONTAINS, !clear);
                 }
             });
         } else if (slot == 32) {
-            promptEditor(player, session, "Type an item tag like minecraft:logs, or blank to clear.", text -> {
-                if (text.equalsIgnoreCase("cancel")) {
-                    return;
-                }
-                if (text.isBlank()) {
-                    spec.setTagKey("");
-                    spec.setMatcher(MatcherType.TAG, false);
-                    return;
-                }
-                Tag<Material> tag = IngredientMatcher.resolveTag(text);
-                if (tag == null) {
-                    player.sendMessage("Unknown item tag: " + text);
-                    return;
-                }
-                spec.setTagKey(text);
-                spec.setMatcher(MatcherType.TAG, true);
-            });
+            player.sendMessage("Item tags can only be used on empty ingredient slots.");
         } else if (slot == 33) {
             IngredientMatcher.captureEnchantments(spec);
             if (spec.enchantments().isEmpty()) {
@@ -446,33 +461,71 @@ public final class GuiManager implements Listener {
         session.recipe().setIngredient(selected, spec);
     }
 
+    private void promptTagEditor(Player player, EditorSession session, int selected, IngredientSpec spec) {
+        session.setSelectedSlot(-1);
+        promptEditor(player, session, "Type an item tag like minecraft:logs.", text -> {
+            if (text.equalsIgnoreCase("cancel")) {
+                return;
+            }
+            if (IngredientMatcher.usableTagValues(text).isEmpty()) {
+                player.sendMessage("Unknown item tag: " + text);
+                return;
+            }
+            spec.setTagKey(text);
+            spec.setMatcher(MatcherType.TAG, true);
+            spec.normalizeMatchers();
+            session.recipe().setIngredient(selected, spec);
+            session.setSelectedSlot(selected);
+        });
+    }
+
     private void handleConditionClick(Player player, EditorSession session, int slot) {
         RecipeConditions conditions = session.recipe().conditions();
         if (slot == 14) {
             session.recipe().setEnabled(!session.recipe().enabled());
         } else if (slot == 15) {
-            promptEditor(player, session, "Type comma-separated dimensions, e.g. minecraft:overworld. Blank means any.", text -> {
+            promptEditor(player, session, "Type comma-separated dimensions, e.g. minecraft:overworld. Type clear to allow any dimension.", text -> {
                 if (!text.equalsIgnoreCase("cancel")) {
+                    if (text.equalsIgnoreCase("clear")) {
+                        conditions.dimensions().clear();
+                        return;
+                    }
+                    List<String> values = parseList(text);
+                    List<String> invalid = ManagedRecipeRegistry.invalidDimensions(values);
+                    if (!invalid.isEmpty()) {
+                        player.sendMessage("Unknown dimension(s): " + String.join(", ", invalid));
+                        return;
+                    }
                     conditions.dimensions().clear();
-                    conditions.dimensions().addAll(parseList(text));
+                    conditions.dimensions().addAll(values);
                 }
             });
         } else if (slot == 16) {
-            promptEditor(player, session, "Type comma-separated biomes, e.g. minecraft:plains. Blank means any.", text -> {
+            promptEditor(player, session, "Type comma-separated biomes, e.g. minecraft:plains. Type clear to allow any biome.", text -> {
                 if (!text.equalsIgnoreCase("cancel")) {
+                    if (text.equalsIgnoreCase("clear")) {
+                        conditions.biomes().clear();
+                        return;
+                    }
+                    List<String> values = parseList(text);
+                    List<String> invalid = ManagedRecipeRegistry.invalidBiomes(values);
+                    if (!invalid.isEmpty()) {
+                        player.sendMessage("Unknown biome(s): " + String.join(", ", invalid));
+                        return;
+                    }
                     conditions.biomes().clear();
-                    conditions.biomes().addAll(parseList(text));
+                    conditions.biomes().addAll(values);
                 }
             });
         } else if (slot == 23) {
             conditions.setWeather(conditions.weather().next());
         } else if (slot == 32) {
-            promptEditor(player, session, "Type minimum experience level. Blank means 0.", text -> {
+            promptEditor(player, session, "Type minimum experience level. Type 0 for no minimum level.", text -> {
                 if (text.equalsIgnoreCase("cancel")) {
                     return;
                 }
                 try {
-                    conditions.setMinimumExperienceLevel(text.isBlank() ? 0 : Integer.parseInt(text.trim()));
+                    conditions.setMinimumExperienceLevel(Integer.parseInt(text.trim()));
                 } catch (NumberFormatException exception) {
                     player.sendMessage("Invalid level: " + text);
                 }
@@ -497,16 +550,16 @@ public final class GuiManager implements Listener {
     }
 
     private void openTypePicker(Player player) {
-        Inventory inventory = Bukkit.createInventory(player, 27, "Select Recipe Type");
+        Inventory inventory = Bukkit.createInventory(player, 54, "Select Recipe Type");
         fill(inventory);
-        inventory.setItem(11, GuiUtil.item(Material.CRAFTING_TABLE, GuiUtil.Tone.SUCCESS, "Shaped Crafting", "Enabled in v0."));
-        inventory.setItem(15, GuiUtil.item(Material.CHEST, GuiUtil.Tone.SUCCESS, "Shapeless Crafting", "Enabled in v0."));
-        inventory.setItem(20, GuiUtil.item(Material.BREWING_STAND, GuiUtil.Tone.MUTED, "Brewing", "Placeholder for a future version."));
-        inventory.setItem(21, GuiUtil.item(Material.FURNACE, GuiUtil.Tone.MUTED, "Smelting", "Placeholder for a future version."));
-        inventory.setItem(22, GuiUtil.item(Material.CAMPFIRE, GuiUtil.Tone.MUTED, "Cooking", "Placeholder for a future version."));
-        inventory.setItem(23, GuiUtil.item(Material.BLAST_FURNACE, GuiUtil.Tone.MUTED, "Blasting", "Placeholder for a future version."));
-        inventory.setItem(24, GuiUtil.item(Material.SMITHING_TABLE, GuiUtil.Tone.MUTED, "Smithing", "Placeholder for a future version."));
-        inventory.setItem(26, GuiUtil.item(Material.BARRIER, GuiUtil.Tone.DANGER, "Back"));
+        inventory.setItem(4, GuiUtil.item(Material.WRITABLE_BOOK, GuiUtil.Tone.INFO, "Recipe Type", "Choose a supported crafting type."));
+        inventory.setItem(11, GuiUtil.item(Material.CRAFTING_TABLE, GuiUtil.Tone.SUCCESS, "Shaped Crafting", "Supported", "Uses the exact grid layout."));
+        inventory.setItem(15, GuiUtil.item(Material.CHEST, GuiUtil.Tone.SUCCESS, "Shapeless Crafting", "Supported", "Ingredients can be placed in any order."));
+        inventory.setItem(22, GuiUtil.item(Material.COPPER_BULB, GuiUtil.Tone.WARNING, "Workstation Recipes", "Shown for planning.", "Not editable yet."));
+        for (WorkstationOption option : WORKSTATION_OPTIONS) {
+            inventory.setItem(option.slot(), workstationItem(option));
+        }
+        inventory.setItem(TYPE_PICKER_BACK_SLOT, GuiUtil.item(Material.BARRIER, GuiUtil.Tone.DANGER, "Back"));
         player.openInventory(inventory);
         openMenus.put(player.getUniqueId(), new OpenMenu(Screen.TYPE_PICKER, 0, "", null, null));
     }
@@ -560,15 +613,23 @@ public final class GuiManager implements Listener {
         fill(inventory);
         for (int i = 0; i < GRID_SLOTS.length; i++) {
             ItemStack ingredient = session.ingredient(i);
-            inventory.setItem(GRID_SLOTS[i], GuiUtil.isEmpty(ingredient) ? GuiUtil.emptySlot() : displayIngredient(session, ingredient));
+            IngredientSpec spec = session.ingredientSpec(i);
+            if (GuiUtil.isEmpty(ingredient) && spec != null && spec.isTagOnly()) {
+                inventory.setItem(GRID_SLOTS[i], displayTagIngredient(spec, 0));
+            } else {
+                inventory.setItem(GRID_SLOTS[i], GuiUtil.isEmpty(ingredient) ? GuiUtil.emptySlot() : displayIngredient(session, ingredient));
+            }
         }
         ItemStack result = session.result();
         inventory.setItem(RESULT_SLOT, GuiUtil.isEmpty(result) ? GuiUtil.item(Material.RED_STAINED_GLASS_PANE, GuiUtil.Tone.DANGER, "Result Slot", "Place the output item here.") : displayResult(session, result));
         inventory.setItem(4, GuiUtil.item(Material.BOOK, GuiUtil.Tone.INFO, session.recipe().kind().displayName(), session.recipe().enabled() ? "Enabled" : "Disabled"));
-        if (session.selectedSlot() >= 0) {
+        if (hasSelectedItemIngredient(session)) {
             renderMatcherControls(inventory, session);
         } else {
             renderRecipeControls(inventory, session);
+            if (hasSelectedTagIngredient(session)) {
+                inventory.setItem(41, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Clear Selection"));
+            }
         }
         if (!session.readOnly()) {
             inventory.setItem(46, GuiUtil.item(Material.LIME_CONCRETE, GuiUtil.Tone.SUCCESS, "Save Recipe"));
@@ -583,6 +644,18 @@ public final class GuiManager implements Listener {
 
     private ItemStack displayResult(EditorSession session, ItemStack result) {
         return session.readOnly() ? GuiUtil.displayClone(result, "Recipe result") : result;
+    }
+
+    private ItemStack displayTagIngredient(IngredientSpec spec, int cycleStep) {
+        List<Material> materials = IngredientMatcher.usableTagValues(spec.tagKey());
+        if (materials.isEmpty()) {
+            return GuiUtil.item(Material.BARRIER, GuiUtil.Tone.DANGER, "#" + spec.tagKey(), "Tag ingredient", "Unknown or empty item tag.");
+        }
+        Material material = materials.get(Math.floorMod(cycleStep, materials.size()));
+        return GuiUtil.namedClone(new ItemStack(material), "#" + spec.tagKey(), GuiUtil.Tone.INFO, List.of(
+            "Tag ingredient",
+            "Matches any item in this tag."
+        ));
     }
 
     private void renderRecipeControls(Inventory inventory, EditorSession session) {
@@ -622,16 +695,35 @@ public final class GuiManager implements Listener {
         for (Player player : Bukkit.getOnlinePlayers()) {
             OpenMenu open = openMenus.get(player.getUniqueId());
             EditorSession session = editorSessions.get(player.getUniqueId());
-            if (open == null || open.screen != Screen.EDITOR || session == null || session.selectedSlot() < 0) {
+            if (open == null || open.screen != Screen.EDITOR || session == null) {
+                continue;
+            }
+            int tagCycle = session.advanceTagCycle();
+            Inventory inventory = player.getOpenInventory().getTopInventory();
+            for (int i = 0; i < GRID_SLOTS.length; i++) {
+                IngredientSpec spec = session.ingredientSpec(i);
+                if (spec != null && spec.isTagOnly() && GuiUtil.isEmpty(session.ingredient(i))) {
+                    inventory.setItem(GRID_SLOTS[i], displayTagIngredient(spec, tagCycle + i));
+                }
+            }
+            if (session.selectedSlot() < 0) {
                 continue;
             }
             ItemStack ingredient = session.ingredient(session.selectedSlot());
+            IngredientSpec selectedSpec = session.ingredientSpec(session.selectedSlot());
             if (GuiUtil.isEmpty(ingredient)) {
-                session.setSelectedSlot(-1);
+                if (selectedSpec == null || !selectedSpec.isTagOnly()) {
+                    session.setSelectedSlot(-1);
+                } else {
+                    int slot = GRID_SLOTS[session.selectedSlot()];
+                    inventory.setItem(slot, session.flipBlink()
+                        ? GuiUtil.item(Material.LIME_STAINED_GLASS_PANE, GuiUtil.Tone.SUCCESS, "Selected Ingredient")
+                        : displayTagIngredient(selectedSpec, tagCycle + session.selectedSlot()));
+                }
                 continue;
             }
             int slot = GRID_SLOTS[session.selectedSlot()];
-            player.getOpenInventory().getTopInventory().setItem(slot, session.flipBlink()
+            inventory.setItem(slot, session.flipBlink()
                 ? GuiUtil.item(Material.LIME_STAINED_GLASS_PANE, GuiUtil.Tone.SUCCESS, "Selected Ingredient")
                 : ingredient);
         }
@@ -639,12 +731,12 @@ public final class GuiManager implements Listener {
 
     private void promptMainSearch(Player player) {
         openMenus.remove(player.getUniqueId());
-        prompts.prompt(player, "Type a recipe search query. Blank clears search.", text -> openMain(player, 0, text.equalsIgnoreCase("cancel") ? "" : text));
+        prompts.prompt(player, "Type a recipe search query. Type clear to clear search.", text -> openMain(player, 0, text.equalsIgnoreCase("cancel") || text.equalsIgnoreCase("clear") ? "" : text));
     }
 
     private void promptVanillaSearch(Player player, int page) {
         openMenus.remove(player.getUniqueId());
-        prompts.prompt(player, "Type a vanilla recipe search query. Blank clears search.", text -> openVanillaList(player, text.equalsIgnoreCase("cancel") ? page : 0, text.equalsIgnoreCase("cancel") ? "" : text));
+        prompts.prompt(player, "Type a vanilla recipe search query. Type clear to clear search.", text -> openVanillaList(player, text.equalsIgnoreCase("cancel") ? page : 0, text.equalsIgnoreCase("cancel") || text.equalsIgnoreCase("clear") ? "" : text));
     }
 
     private void promptEditor(Player player, EditorSession session, String message, java.util.function.Consumer<String> consumer) {
@@ -663,15 +755,26 @@ public final class GuiManager implements Listener {
             return null;
         }
         ItemStack item = session.ingredient(selected);
-        if (GuiUtil.isEmpty(item)) {
-            return null;
-        }
         IngredientSpec spec = session.recipe().ingredient(selected);
-        if (spec == null) {
+        if (GuiUtil.isEmpty(item)) {
+            return spec == null ? new IngredientSpec() : spec.copy();
+        }
+        if (spec == null || spec.isTagOnly()) {
             spec = IngredientSpec.fromSample(item);
             session.recipe().setIngredient(selected, spec);
         }
         return spec;
+    }
+
+    private boolean hasSelectedItemIngredient(EditorSession session) {
+        int selected = session.selectedSlot();
+        return selected >= 0 && !GuiUtil.isEmpty(session.ingredient(selected));
+    }
+
+    private boolean hasSelectedTagIngredient(EditorSession session) {
+        int selected = session.selectedSlot();
+        IngredientSpec spec = selected < 0 ? null : session.ingredientSpec(selected);
+        return spec != null && spec.isTagOnly() && GuiUtil.isEmpty(session.ingredient(selected));
     }
 
     private void toggle(IngredientSpec spec, MatcherType matcherType) {
@@ -746,6 +849,19 @@ public final class GuiManager implements Listener {
         }
     }
 
+    private ItemStack workstationItem(WorkstationOption option) {
+        return GuiUtil.item(option.material(), GuiUtil.Tone.MUTED, option.name(), "Not editable yet.", option.description(), "Click for status.");
+    }
+
+    private WorkstationOption workstationOption(int slot) {
+        for (WorkstationOption option : WORKSTATION_OPTIONS) {
+            if (option.slot() == slot) {
+                return option;
+            }
+        }
+        return null;
+    }
+
     private void releaseEditor(Player player) {
         EditorSession session = editorSessions.remove(player.getUniqueId());
         if (session != null) {
@@ -798,5 +914,8 @@ public final class GuiManager implements Listener {
     }
 
     private record OpenMenu(Screen screen, int page, String query, String recipeId, String vanillaKey) {
+    }
+
+    private record WorkstationOption(int slot, Material material, String name, String description) {
     }
 }

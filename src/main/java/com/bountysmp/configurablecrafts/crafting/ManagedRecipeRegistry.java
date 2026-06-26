@@ -17,6 +17,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Keyed;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.Registry;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.RecipeChoice;
@@ -128,7 +129,7 @@ public final class ManagedRecipeRegistry {
 
     public String validateForSave(ManagedRecipe recipe) {
         if (!recipe.kind().isSupported()) {
-            return "That recipe type is a placeholder in v0.";
+            return "That recipe type is not editable yet.";
         }
         ItemStack result = recipe.result();
         if (result == null || result.getType().isAir()) {
@@ -136,6 +137,14 @@ public final class ManagedRecipeRegistry {
         }
         if (nonEmptyIngredients(recipe).isEmpty()) {
             return "Set at least one ingredient before saving.";
+        }
+        String invalidConditions = invalidConditions(recipe);
+        if (invalidConditions != null) {
+            return invalidConditions;
+        }
+        String invalidIngredients = invalidIngredients(recipe);
+        if (invalidIngredients != null) {
+            return invalidIngredients;
         }
         String conflict = conflictDescription(recipe);
         if (conflict != null) {
@@ -178,7 +187,12 @@ public final class ManagedRecipeRegistry {
             }
             return;
         }
-        if (!recipe.kind().isSupported() || recipe.result() == null || recipe.result().getType().isAir() || nonEmptyIngredients(recipe).isEmpty()) {
+        if (!recipe.kind().isSupported()
+            || recipe.result() == null
+            || recipe.result().getType().isAir()
+            || nonEmptyIngredients(recipe).isEmpty()
+            || invalidConditions(recipe) != null
+            || invalidIngredients(recipe) != null) {
             plugin.getLogger().warning("Skipping invalid recipe " + recipe.id() + ".");
             return;
         }
@@ -273,6 +287,55 @@ public final class ManagedRecipeRegistry {
             }
         }
         return null;
+    }
+
+    private String invalidConditions(ManagedRecipe recipe) {
+        List<String> invalidDimensions = invalidDimensions(recipe.conditions().dimensions());
+        if (!invalidDimensions.isEmpty()) {
+            return "Unknown dimension(s): " + String.join(", ", invalidDimensions);
+        }
+        List<String> invalidBiomes = invalidBiomes(recipe.conditions().biomes());
+        if (!invalidBiomes.isEmpty()) {
+            return "Unknown biome(s): " + String.join(", ", invalidBiomes);
+        }
+        return null;
+    }
+
+    private String invalidIngredients(ManagedRecipe recipe) {
+        for (IngredientSpec spec : recipe.ingredients()) {
+            if (spec == null || !spec.hasUsableTag()) {
+                continue;
+            }
+            if (!spec.isTagOnly()) {
+                return "Item tags can only be used on empty ingredient slots.";
+            }
+            if (IngredientMatcher.usableTagValues(spec.tagKey()).isEmpty()) {
+                return "Unknown item tag: " + spec.tagKey();
+            }
+        }
+        return null;
+    }
+
+    public static List<String> invalidDimensions(Collection<String> dimensions) {
+        List<String> invalid = new ArrayList<>();
+        for (String dimension : dimensions) {
+            NamespacedKey key = NamespacedKey.fromString(dimension == null ? "" : dimension);
+            if (key == null || Bukkit.getWorld(key) == null) {
+                invalid.add(dimension);
+            }
+        }
+        return invalid;
+    }
+
+    public static List<String> invalidBiomes(Collection<String> biomes) {
+        List<String> invalid = new ArrayList<>();
+        for (String biome : biomes) {
+            NamespacedKey key = NamespacedKey.fromString(biome == null ? "" : biome);
+            if (key == null || Registry.BIOME.get(key) == null) {
+                invalid.add(biome);
+            }
+        }
+        return invalid;
     }
 
     private List<IngredientSpec> nonEmptyIngredients(ManagedRecipe recipe) {

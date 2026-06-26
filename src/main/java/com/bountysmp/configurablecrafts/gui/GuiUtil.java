@@ -91,7 +91,7 @@ final class GuiUtil {
     }
 
     static ItemStack emptySlot() {
-        return item(Material.GRAY_STAINED_GLASS_PANE, Tone.MUTED, "Empty Slot", "Place an item here.");
+        return item(Material.GRAY_STAINED_GLASS_PANE, Tone.MUTED, "Empty Slot", "Place an item here.", "Right-click with an empty hand to set an item tag.");
     }
 
     static boolean isEmpty(ItemStack itemStack) {

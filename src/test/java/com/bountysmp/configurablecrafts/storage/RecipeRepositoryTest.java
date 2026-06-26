@@ -42,4 +42,19 @@ class RecipeRepositoryTest extends BukkitTest {
         assertEquals(Material.APPLE, copy.ingredient(0).sample().getType());
         assertEquals(7, copy.conditions().minimumExperienceLevel());
     }
+
+    @Test
+    void yamlRoundTripPreservesTagOnlyIngredient() {
+        RecipeRepository repository = new RecipeRepository(new File(tempDir, "recipes.yml"));
+        ManagedRecipe recipe = new ManagedRecipe("tag_only", RecipeKind.SHAPED);
+        recipe.setResult(new ItemStack(Material.CHEST));
+        recipe.setIngredient(4, IngredientSpec.fromTag("minecraft:logs"));
+
+        repository.save(List.of(recipe));
+        List<ManagedRecipe> loaded = repository.load();
+
+        IngredientSpec spec = loaded.getFirst().ingredient(4);
+        assertTrue(spec.isTagOnly());
+        assertEquals("minecraft:logs", spec.tagKey());
+    }
 }

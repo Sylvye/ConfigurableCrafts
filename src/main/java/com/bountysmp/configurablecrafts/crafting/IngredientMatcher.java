@@ -3,8 +3,8 @@ package com.bountysmp.configurablecrafts.crafting;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
 import com.bountysmp.configurablecrafts.model.MatcherType;
 import com.bountysmp.configurablecrafts.util.ItemText;
-import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -38,6 +38,12 @@ public final class IngredientMatcher {
     }
 
     public static RecipeChoice toRecipeChoice(IngredientSpec spec) {
+        if (spec.hasMatcher(MatcherType.TAG) && !spec.tagKey().isBlank()) {
+            List<Material> values = usableTagValues(spec.tagKey());
+            if (!values.isEmpty()) {
+                return new RecipeChoice.MaterialChoice(values);
+            }
+        }
         ItemStack sample = spec.sample();
         if (sample == null || sample.getType().isAir()) {
             throw new IllegalArgumentException("Ingredient sample cannot be empty.");
@@ -46,12 +52,6 @@ public final class IngredientMatcher {
             ItemStack exact = sample.clone();
             exact.setAmount(1);
             return new RecipeChoice.ExactChoice(exact);
-        }
-        if (spec.hasMatcher(MatcherType.TAG) && !spec.tagKey().isBlank()) {
-            Tag<Material> tag = resolveTag(spec.tagKey());
-            if (tag != null && !tag.getValues().isEmpty()) {
-                return new RecipeChoice.MaterialChoice(new ArrayList<>(tag.getValues()));
-            }
         }
         return new RecipeChoice.MaterialChoice(sample.getType());
     }
@@ -62,6 +62,17 @@ public final class IngredientMatcher {
             return null;
         }
         return Bukkit.getTag(Tag.REGISTRY_ITEMS, key, Material.class);
+    }
+
+    public static List<Material> usableTagValues(String tagKey) {
+        Tag<Material> tag = resolveTag(tagKey);
+        if (tag == null) {
+            return List.of();
+        }
+        return tag.getValues().stream()
+            .filter(material -> material != null && !material.isAir() && material.isItem())
+            .sorted()
+            .toList();
     }
 
     public static void captureEnchantments(IngredientSpec spec) {
@@ -79,7 +90,7 @@ public final class IngredientMatcher {
         return switch (matcher) {
             case MATERIAL -> input.getType() == sample.getType();
             case EXACT -> isSimilarIgnoringAmount(sample, input);
-            case ITEM_NAME -> Objects.equals(ItemText.customName(sample), ItemText.customName(input));
+            case ITEM_NAME -> sample != null && Objects.equals(ItemText.customName(sample), ItemText.customName(input));
             case LORE_CONTAINS -> loreContains(input, spec.loreContains());
             case TAG -> inTag(input.getType(), spec.tagKey());
             case ENCHANTMENTS -> hasEnchantments(input, spec.enchantments());

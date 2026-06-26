@@ -21,8 +21,23 @@ public final class IngredientSpec {
         return spec;
     }
 
+    public static IngredientSpec fromTag(String tagKey) {
+        IngredientSpec spec = new IngredientSpec();
+        spec.setTagKey(tagKey);
+        spec.setMatcher(MatcherType.TAG, !spec.tagKey().isBlank());
+        return spec;
+    }
+
     public boolean isEmpty() {
-        return sample == null || sample.getType().isAir();
+        return !hasUsableTag() && (sample == null || sample.getType().isAir());
+    }
+
+    public boolean isTagOnly() {
+        return hasUsableTag() && (sample == null || sample.getType().isAir());
+    }
+
+    public boolean hasUsableTag() {
+        return hasMatcher(MatcherType.TAG) && !tagKey.isBlank();
     }
 
     public ItemStack sample() {
@@ -43,9 +58,25 @@ public final class IngredientSpec {
 
     public void setMatcher(MatcherType matcherType, boolean enabled) {
         if (enabled) {
+            if (matcherType == MatcherType.EXACT) {
+                matchers.clear();
+            } else {
+                matchers.remove(MatcherType.EXACT);
+            }
             matchers.add(matcherType);
         } else {
             matchers.remove(matcherType);
+        }
+    }
+
+    public void normalizeMatchers() {
+        if (matchers.contains(MatcherType.EXACT) && matchers.size() > 1) {
+            matchers.clear();
+            matchers.add(MatcherType.EXACT);
+        }
+        if (isTagOnly() && matchers.size() > 1) {
+            matchers.clear();
+            matchers.add(MatcherType.TAG);
         }
     }
 

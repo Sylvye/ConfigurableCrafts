@@ -8,8 +8,11 @@ import com.bountysmp.configurablecrafts.model.IngredientSpec;
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
 import com.bountysmp.configurablecrafts.model.RecipeKind;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Tag;
 import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.Test;
+import org.mockbukkit.mockbukkit.MockBukkit;
 
 class RecipePatternTest extends BukkitTest {
     @Test
@@ -48,6 +51,32 @@ class RecipePatternTest extends BukkitTest {
         matrix[4] = new ItemStack(Material.SLIME_BALL);
         matrix[7] = new ItemStack(Material.STRING);
         matrix[8] = new ItemStack(Material.STRING);
+
+        assertTrue(RecipePattern.matches(recipe, matrix));
+    }
+
+    @Test
+    void shapedRecipesTreatTagOnlySpecsAsIngredients() {
+        MockBukkit.getMock().createMaterialTag(NamespacedKey.minecraft("test_planks"), Tag.REGISTRY_ITEMS, Material.OAK_PLANKS, Material.SPRUCE_PLANKS);
+        ManagedRecipe recipe = new ManagedRecipe("test", RecipeKind.SHAPED);
+        recipe.setIngredient(8, IngredientSpec.fromTag("minecraft:test_planks"));
+
+        ItemStack[] shifted = new ItemStack[9];
+        shifted[0] = new ItemStack(Material.SPRUCE_PLANKS);
+
+        assertTrue(RecipePattern.matches(recipe, shifted));
+    }
+
+    @Test
+    void shapelessRecipesTreatTagOnlySpecsAsIngredients() {
+        MockBukkit.getMock().createMaterialTag(NamespacedKey.minecraft("test_gems"), Tag.REGISTRY_ITEMS, Material.DIAMOND, Material.EMERALD);
+        ManagedRecipe recipe = new ManagedRecipe("test", RecipeKind.SHAPELESS);
+        recipe.setIngredient(0, IngredientSpec.fromTag("minecraft:test_gems"));
+        recipe.setIngredient(1, IngredientSpec.fromSample(new ItemStack(Material.STICK)));
+
+        ItemStack[] matrix = new ItemStack[9];
+        matrix[3] = new ItemStack(Material.STICK);
+        matrix[6] = new ItemStack(Material.EMERALD);
 
         assertTrue(RecipePattern.matches(recipe, matrix));
     }

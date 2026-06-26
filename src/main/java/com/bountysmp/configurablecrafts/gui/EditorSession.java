@@ -2,6 +2,7 @@ package com.bountysmp.configurablecrafts.gui;
 
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
+import com.bountysmp.configurablecrafts.model.MatcherType;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
@@ -15,6 +16,7 @@ final class EditorSession {
     private boolean readOnly;
     private boolean suspended;
     private boolean blink;
+    private int tagCycle;
 
     EditorSession(ManagedRecipe recipe, boolean readOnly) {
         this.recipe = recipe.copy();
@@ -39,9 +41,19 @@ final class EditorSession {
     void setIngredient(int index, ItemStack itemStack, boolean owned) {
         ingredients[index] = itemStack == null ? null : itemStack.clone();
         ownedIngredients[index] = !GuiUtil.isEmpty(itemStack) && owned;
+        if (GuiUtil.isEmpty(itemStack)) {
+            recipe.setIngredient(index, null);
+        } else {
+            recipe.setIngredient(index, IngredientSpec.fromSample(itemStack));
+        }
         if (GuiUtil.isEmpty(itemStack) && selectedSlot == index) {
             selectedSlot = -1;
         }
+    }
+
+    IngredientSpec ingredientSpec(int index) {
+        IngredientSpec spec = recipe.ingredient(index);
+        return spec == null ? null : spec.copy();
     }
 
     boolean ownsIngredient(int index) {
@@ -86,18 +98,22 @@ final class EditorSession {
         return blink;
     }
 
+    int advanceTagCycle() {
+        return tagCycle++;
+    }
+
     void applyItemsToRecipe() {
         for (int i = 0; i < 9; i++) {
             ItemStack item = ingredients[i];
             IngredientSpec previous = recipe.ingredient(i);
             if (GuiUtil.isEmpty(item)) {
-                recipe.setIngredient(i, null);
+                recipe.setIngredient(i, previous != null && previous.isTagOnly() ? previous : null);
                 continue;
             }
-            IngredientSpec spec = previous == null ? IngredientSpec.fromSample(item) : previous.copy();
+            IngredientSpec spec = previous == null || previous.isTagOnly() ? IngredientSpec.fromSample(item) : previous.copy();
             spec.setSample(item);
             if (spec.matchers().isEmpty()) {
-                spec.matchers().add(com.bountysmp.configurablecrafts.model.MatcherType.MATERIAL);
+                spec.setMatcher(MatcherType.MATERIAL, true);
             }
             recipe.setIngredient(i, spec);
         }
