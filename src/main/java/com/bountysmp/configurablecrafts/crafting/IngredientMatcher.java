@@ -3,6 +3,7 @@ package com.bountysmp.configurablecrafts.crafting;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
 import com.bountysmp.configurablecrafts.model.MatcherType;
 import com.bountysmp.configurablecrafts.util.ItemText;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
@@ -145,6 +146,9 @@ public final class IngredientMatcher {
         if (spec == null || spec.isEmpty()) {
             return "_";
         }
+        if (spec.hasMatcher(MatcherType.EXACT)) {
+            return "exact:" + exactFingerprint(spec.sample());
+        }
         if (spec.hasMatcher(MatcherType.TAG) && !spec.tagKey().isBlank()) {
             return "#" + spec.tagKey();
         }
@@ -164,12 +168,17 @@ public final class IngredientMatcher {
             return "materials:" + materials.stream().map(Enum::name).sorted().toList();
         }
         if (choice instanceof RecipeChoice.ExactChoice exactChoice) {
-            return "material:" + exactChoice.getChoices().stream()
-                .map(ItemStack::getType)
-                .map(Enum::name)
+            return "exact:" + exactChoice.getChoices().stream()
+                .map(IngredientMatcher::exactFingerprint)
                 .sorted()
                 .toList();
         }
         return choice.toString();
+    }
+
+    private static String exactFingerprint(ItemStack itemStack) {
+        ItemStack normalized = itemStack.clone();
+        normalized.setAmount(1);
+        return Base64.getEncoder().encodeToString(normalized.serializeAsBytes());
     }
 }

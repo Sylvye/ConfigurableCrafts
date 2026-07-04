@@ -9,6 +9,7 @@ import com.bountysmp.configurablecrafts.BukkitTest;
 import com.bountysmp.configurablecrafts.crafting.ManagedRecipeRegistry;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
+import com.bountysmp.configurablecrafts.model.MatcherType;
 import com.bountysmp.configurablecrafts.model.RecipeKind;
 import com.bountysmp.configurablecrafts.model.RecipeListFilter;
 import com.bountysmp.configurablecrafts.storage.RecipeRepository;
@@ -225,6 +226,40 @@ class GuiManagerTest extends BukkitTest {
         invokeBlink(fixture.guiManager);
 
         assertFalse(openMenus(fixture.guiManager).containsKey(player.getUniqueId()));
+    }
+
+    @Test
+    void newlyPlacedIngredientDefaultsToExactMatcher() {
+        EditorSession session = new EditorSession(new ManagedRecipe("new_exact", RecipeKind.SHAPED), false);
+
+        session.setIngredient(0, new ItemStack(Material.STICK), true);
+
+        assertTrue(session.ingredientSpec(0).hasMatcher(MatcherType.EXACT));
+        assertFalse(session.ingredientSpec(0).hasMatcher(MatcherType.MATERIAL));
+    }
+
+    @Test
+    void existingMaterialIngredientRemainsMaterialWhenUnchanged() {
+        ManagedRecipe recipe = new ManagedRecipe("existing_material", RecipeKind.SHAPED);
+        recipe.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.STICK)));
+        EditorSession session = new EditorSession(recipe, false);
+
+        session.applyItemsToRecipe();
+
+        assertTrue(session.recipe().ingredient(0).hasMatcher(MatcherType.MATERIAL));
+        assertFalse(session.recipe().ingredient(0).hasMatcher(MatcherType.EXACT));
+    }
+
+    @Test
+    void replacingExistingMaterialIngredientDefaultsReplacementToExact() {
+        ManagedRecipe recipe = new ManagedRecipe("replace_material", RecipeKind.SHAPED);
+        recipe.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.STICK)));
+        EditorSession session = new EditorSession(recipe, false);
+
+        session.setIngredient(0, new ItemStack(Material.DIAMOND), true);
+
+        assertTrue(session.ingredientSpec(0).hasMatcher(MatcherType.EXACT));
+        assertFalse(session.ingredientSpec(0).hasMatcher(MatcherType.MATERIAL));
     }
 
     private Fixture newFixture() {

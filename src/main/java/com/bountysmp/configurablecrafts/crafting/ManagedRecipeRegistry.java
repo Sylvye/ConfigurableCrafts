@@ -3,7 +3,9 @@ package com.bountysmp.configurablecrafts.crafting;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
 import com.bountysmp.configurablecrafts.model.RecipeKind;
+import com.bountysmp.configurablecrafts.model.WeatherMode;
 import com.bountysmp.configurablecrafts.storage.RecipeRepository;
+import io.papermc.paper.potion.PotionMix;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -13,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import org.bukkit.Bukkit;
 import org.bukkit.Keyed;
 import org.bukkit.Material;
@@ -34,16 +37,41 @@ import org.bukkit.plugin.Plugin;
 
 public final class ManagedRecipeRegistry {
     private static final char[] INGREDIENT_KEYS = "ABCDEFGHI".toCharArray();
+    private static final Set<Material> VANILLA_BREWING_INGREDIENTS = Set.of(
+        Material.NETHER_WART,
+        Material.REDSTONE,
+        Material.GLOWSTONE_DUST,
+        Material.FERMENTED_SPIDER_EYE,
+        Material.GUNPOWDER,
+        Material.DRAGON_BREATH,
+        Material.SUGAR,
+        Material.RABBIT_FOOT,
+        Material.GLISTERING_MELON_SLICE,
+        Material.SPIDER_EYE,
+        Material.PUFFERFISH,
+        Material.MAGMA_CREAM,
+        Material.GOLDEN_CARROT,
+        Material.BLAZE_POWDER,
+        Material.GHAST_TEAR,
+        Material.TURTLE_HELMET,
+        Material.PHANTOM_MEMBRANE
+    );
 
     private final Plugin plugin;
     private final RecipeRepository repository;
+    private final PotionMixes potionMixes;
     private final Map<String, ManagedRecipe> recipes = new LinkedHashMap<>();
     private final Map<NamespacedKey, Recipe> vanillaRecipes = new LinkedHashMap<>();
     private final Map<NamespacedKey, String> managedKeys = new HashMap<>();
 
     public ManagedRecipeRegistry(Plugin plugin, RecipeRepository repository) {
+        this(plugin, repository, new BukkitPotionMixes());
+    }
+
+    ManagedRecipeRegistry(Plugin plugin, RecipeRepository repository, PotionMixes potionMixes) {
         this.plugin = plugin;
         this.repository = repository;
+        this.potionMixes = potionMixes;
     }
 
     public void cacheVanillaRecipes() {
@@ -169,7 +197,21 @@ public final class ManagedRecipeRegistry {
         if (conflict != null) {
             return conflict;
         }
+        String brewingConflict = brewingConflictDescription(recipe);
+        if (brewingConflict != null) {
+            return brewingConflict;
+        }
         return null;
+    }
+
+    public List<String> warningsForSave(ManagedRecipe recipe) {
+        if (recipe.kind().canonical() != RecipeKind.BREWING) {
+            return List.of();
+        }
+        if (likelyShadowsVanillaBrewing(recipe)) {
+            return List.of("Warning: this brewing recipe may override a vanilla brewing mix.");
+        }
+        return List.of();
     }
 
     public void upsert(ManagedRecipe recipe) {
@@ -210,9 +252,21 @@ public final class ManagedRecipeRegistry {
             || recipe.result() == null
             || recipe.result().getType().isAir()
             || nonEmptyIngredients(recipe).isEmpty()
+            || invalidShape(recipe) != null
             || invalidConditions(recipe) != null
-            || invalidIngredients(recipe) != null) {
+            || invalidIngredients(recipe) != null
+            || brewingConflictDescription(recipe) != null) {
             plugin.getLogger().warning("Skipping invalid recipe " + recipe.id() + ".");
+            return;
+        }
+        if (recipe.kind().canonical() == RecipeKind.BREWING) {
+            potionMixes.add(new PotionMix(
+                recipe.managedKey(plugin),
+                recipe.result(),
+                PotionMix.createPredicateChoice(input -> IngredientMatcher.matches(recipe.ingredient(0), input)),
+                PotionMix.createPredicateChoice(ingredient -> IngredientMatcher.matches(recipe.ingredient(1), ingredient))
+            ));
+            managedKeys.put(recipe.managedKey(plugin), recipe.id());
             return;
         }
         if (recipe.sourceKey() != null) {
@@ -231,6 +285,7 @@ public final class ManagedRecipeRegistry {
     private void unregisterManaged(ManagedRecipe recipe) {
         NamespacedKey key = recipe.managedKey(plugin);
         Bukkit.removeRecipe(key, true);
+        potionMixes.remove(key);
         managedKeys.remove(key);
     }
 
@@ -345,8 +400,20 @@ public final class ManagedRecipeRegistry {
             if (recipe.playerLimit().enabled()) {
                 return recipe.kind().displayName() + " recipes cannot use per-player limits.";
             }
+            if (recipe.kind() == RecipeKind.BREWING && recipe.globalLimit().enabled()) {
+                return "Brewing recipes cannot use global limits.";
+            }
             if (recipe.conditions().minimumExperienceLevel() > 0) {
                 return recipe.kind().displayName() + " recipes cannot require player experience levels.";
+            }
+            if (recipe.kind() == RecipeKind.BREWING && !recipe.conditions().dimensions().isEmpty()) {
+                return "Brewing recipes cannot use dimension conditions.";
+            }
+            if (recipe.kind() == RecipeKind.BREWING && !recipe.conditions().biomes().isEmpty()) {
+                return "Brewing recipes cannot use biome conditions.";
+            }
+            if (recipe.kind() == RecipeKind.BREWING && recipe.conditions().weather() != WeatherMode.ANY) {
+                return "Brewing recipes cannot use weather conditions.";
             }
         }
         List<String> invalidDimensions = invalidDimensions(recipe.conditions().dimensions());
@@ -358,6 +425,48 @@ public final class ManagedRecipeRegistry {
             return "Unknown biome(s): " + String.join(", ", invalidBiomes);
         }
         return null;
+    }
+
+    private String brewingConflictDescription(ManagedRecipe recipe) {
+        if (recipe.kind().canonical() != RecipeKind.BREWING) {
+            return null;
+        }
+        String signature = brewingSignature(recipe);
+        String reagentSignature = IngredientMatcher.signatureToken(recipe.ingredient(1));
+        for (ManagedRecipe other : recipes.values()) {
+            if (other.id().equals(recipe.id()) || other.kind().canonical() != RecipeKind.BREWING) {
+                continue;
+            }
+            if (brewingSignature(other).equals(signature)) {
+                return "This brewing recipe collides with " + other.displayLabel() + ".";
+            }
+            if (IngredientMatcher.signatureToken(other.ingredient(1)).equals(reagentSignature)
+                && other.brewTimeTicks() != recipe.brewTimeTicks()) {
+                return "Brewing recipes using the same ingredient must use the same brew time.";
+            }
+        }
+        return null;
+    }
+
+    private String brewingSignature(ManagedRecipe recipe) {
+        return IngredientMatcher.signatureToken(recipe.ingredient(0)) + " + " + IngredientMatcher.signatureToken(recipe.ingredient(1));
+    }
+
+    private boolean likelyShadowsVanillaBrewing(ManagedRecipe recipe) {
+        IngredientSpec input = recipe.ingredient(0);
+        IngredientSpec ingredient = recipe.ingredient(1);
+        ItemStack inputSample = input == null ? null : input.sample();
+        ItemStack ingredientSample = ingredient == null ? null : ingredient.sample();
+        return inputSample != null
+            && isPotionLike(inputSample.getType())
+            && ingredientSample != null
+            && VANILLA_BREWING_INGREDIENTS.contains(ingredientSample.getType());
+    }
+
+    private boolean isPotionLike(Material material) {
+        return material == Material.POTION
+            || material == Material.SPLASH_POTION
+            || material == Material.LINGERING_POTION;
     }
 
     private String invalidShape(ManagedRecipe recipe) {
@@ -536,6 +645,24 @@ public final class ManagedRecipeRegistry {
 
         private boolean empty() {
             return maxRow < minRow || maxCol < minCol;
+        }
+    }
+
+    interface PotionMixes {
+        void add(PotionMix potionMix);
+
+        void remove(NamespacedKey key);
+    }
+
+    private static final class BukkitPotionMixes implements PotionMixes {
+        @Override
+        public void add(PotionMix potionMix) {
+            Bukkit.getPotionBrewer().addPotionMix(potionMix);
+        }
+
+        @Override
+        public void remove(NamespacedKey key) {
+            Bukkit.getPotionBrewer().removePotionMix(key);
         }
     }
 }

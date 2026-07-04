@@ -21,6 +21,13 @@ public final class IngredientSpec {
         return spec;
     }
 
+    public static IngredientSpec fromExactSample(ItemStack sample) {
+        IngredientSpec spec = new IngredientSpec();
+        spec.setSample(sample);
+        spec.matchers.add(MatcherType.EXACT);
+        return spec;
+    }
+
     public static IngredientSpec fromTag(String tagKey) {
         IngredientSpec spec = new IngredientSpec();
         spec.setTagKey(tagKey);

@@ -28,7 +28,7 @@ public final class ConfigurableCraftsPlugin extends JavaPlugin {
         this.repository = new RecipeRepository(new File(getDataFolder(), "recipes.yml"));
         this.recipeRegistry = new ManagedRecipeRegistry(this, repository);
         this.craftLimitTracker = new CraftLimitTracker(this, new File(getDataFolder(), "limit-usage.yml"));
-        this.brewingRecipeService = new BrewingRecipeService(this, recipeRegistry, craftLimitTracker);
+        this.brewingRecipeService = new BrewingRecipeService(recipeRegistry);
         this.chatPromptManager = new ChatPromptManager(this);
         this.guiManager = new GuiManager(this, recipeRegistry, chatPromptManager);
 

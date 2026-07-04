@@ -640,6 +640,9 @@ public final class GuiManager implements Listener {
         openMenus.remove(player.getUniqueId());
         registry.upsert(session.recipe());
         player.sendMessage("Recipe saved.");
+        for (String warning : registry.warningsForSave(session.recipe())) {
+            player.sendMessage(warning);
+        }
         player.closeInventory();
         Bukkit.getScheduler().runTask(plugin, () -> openMain(player, 0, ""));
     }
