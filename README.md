@@ -4,8 +4,9 @@ ConfigurableCrafts is a Paper plugin for managing custom and overridden crafting
 
 ## Features
 
-- Create shaped and shapeless custom recipes through an inventory GUI.
+- Create shaped, shapeless, and workstation custom recipes through an inventory GUI.
 - Browse and override supported vanilla crafting recipes.
+- Configure brewing, furnace-like cooking, stonecutting, and smithing recipes.
 - Configure ingredient matching and recipe result items from in-game item stacks.
 - Restrict recipes by dimension, biome, weather, and minimum experience level.
 - Persist managed recipes to `plugins/ConfigurableCrafts/recipes.yml`.

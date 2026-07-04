@@ -3,6 +3,8 @@ package com.bountysmp.configurablecrafts.gui;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
 import com.bountysmp.configurablecrafts.model.MatcherType;
+import com.bountysmp.configurablecrafts.model.RecipeKind;
+import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
@@ -44,7 +46,11 @@ final class EditorSession {
         if (GuiUtil.isEmpty(itemStack)) {
             recipe.setIngredient(index, null);
         } else {
-            recipe.setIngredient(index, IngredientSpec.fromSample(itemStack));
+            IngredientSpec spec = IngredientSpec.fromSample(itemStack);
+            if (recipe.kind() == RecipeKind.BREWING && index == 0 && isPotion(itemStack)) {
+                spec.setMatcher(MatcherType.EXACT, true);
+            }
+            recipe.setIngredient(index, spec);
         }
         if (GuiUtil.isEmpty(itemStack) && selectedSlot == index) {
             selectedSlot = -1;
@@ -115,9 +121,19 @@ final class EditorSession {
             if (spec.matchers().isEmpty()) {
                 spec.setMatcher(MatcherType.MATERIAL, true);
             }
+            if (recipe.kind() == RecipeKind.BREWING && i == 0 && isPotion(item) && spec.hasMatcher(MatcherType.MATERIAL) && spec.matchers().size() == 1) {
+                spec.setMatcher(MatcherType.EXACT, true);
+            }
             recipe.setIngredient(i, spec);
         }
         recipe.setResult(result);
+    }
+
+    private boolean isPotion(ItemStack itemStack) {
+        return itemStack != null
+            && (itemStack.getType() == Material.POTION
+                || itemStack.getType() == Material.SPLASH_POTION
+                || itemStack.getType() == Material.LINGERING_POTION);
     }
 
     void releaseOwnedItems(Player player) {

@@ -1,7 +1,8 @@
 package com.bountysmp.configurablecrafts.gui;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.bountysmp.configurablecrafts.BukkitTest;
@@ -9,9 +10,15 @@ import com.bountysmp.configurablecrafts.crafting.ManagedRecipeRegistry;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
 import com.bountysmp.configurablecrafts.model.RecipeKind;
+import com.bountysmp.configurablecrafts.model.RecipeListFilter;
 import com.bountysmp.configurablecrafts.storage.RecipeRepository;
 import java.io.File;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Map;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Tag;
@@ -127,6 +134,99 @@ class GuiManagerTest extends BukkitTest {
         assertEquals(Material.ARROW, player.getOpenInventory().getTopInventory().getItem(41).getType());
     }
 
+    @Test
+    void defaultMainMenuShowsDisabledRecipesToViewers() {
+        Fixture fixture = newFixture();
+        ManagedRecipe recipe = sampleRecipe();
+        recipe.setEnabled(false);
+        fixture.registry.upsert(recipe);
+        PlayerMock player = MockBukkit.getMock().addPlayer();
+
+        fixture.guiManager.openMain(player, 0, "");
+
+        assertEquals(Material.DIAMOND, player.getOpenInventory().getTopInventory().getItem(18).getType());
+    }
+
+    @Test
+    void hopperFilterCyclesBetweenCustomAndDisabled() {
+        Fixture fixture = newFixture();
+        ManagedRecipe enabled = sampleRecipe();
+        enabled.setResult(new ItemStack(Material.EMERALD));
+        fixture.registry.upsert(enabled);
+        ManagedRecipe disabled = new ManagedRecipe("disabled", RecipeKind.SHAPED);
+        disabled.setEnabled(false);
+        disabled.setResult(new ItemStack(Material.DIAMOND));
+        disabled.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.STICK)));
+        fixture.registry.upsert(disabled);
+        PlayerMock player = MockBukkit.getMock().addPlayer();
+        fixture.guiManager.openMain(player, 0, "");
+
+        fixture.guiManager.onClick(click(player, 16, ClickType.LEFT, InventoryAction.PICKUP_ALL));
+        assertEquals(Material.EMERALD, player.getOpenInventory().getTopInventory().getItem(18).getType());
+
+        fixture.guiManager.onClick(click(player, 16, ClickType.LEFT, InventoryAction.PICKUP_ALL));
+        assertEquals(Material.DIAMOND, player.getOpenInventory().getTopInventory().getItem(18).getType());
+    }
+
+    @Test
+    void brewingPlaceholderOpensBrewingEditorLayout() {
+        Fixture fixture = newFixture();
+        PlayerMock player = MockBukkit.getMock().addPlayer();
+        player.addAttachment(fixture.plugin, "configurablecrafts.admin", true);
+        fixture.guiManager.openMain(player, 0, "");
+
+        fixture.guiManager.onClick(click(player, 10, ClickType.LEFT, InventoryAction.PICKUP_ALL));
+        fixture.guiManager.onClick(click(player, 28, ClickType.LEFT, InventoryAction.PICKUP_ALL));
+
+        assertEquals(Material.GRAY_STAINED_GLASS_PANE, player.getOpenInventory().getTopInventory().getItem(10).getType());
+        assertEquals(Material.GRAY_STAINED_GLASS_PANE, player.getOpenInventory().getTopInventory().getItem(11).getType());
+        assertEquals(Material.BLACK_STAINED_GLASS_PANE, player.getOpenInventory().getTopInventory().getItem(12).getType());
+        assertEquals(Material.CLOCK, player.getOpenInventory().getTopInventory().getItem(43).getType());
+    }
+
+    @Test
+    void disabledRecipesBlinkBarrierInMainMenu() throws ReflectiveOperationException {
+        Fixture fixture = newFixture();
+        ManagedRecipe recipe = sampleRecipe();
+        recipe.setEnabled(false);
+        fixture.registry.upsert(recipe);
+        PlayerMock player = MockBukkit.getMock().addPlayer();
+        fixture.guiManager.openMain(player, 0, "", RecipeListFilter.DISABLED);
+
+        invokeBlink(fixture.guiManager);
+
+        assertEquals(Material.BARRIER, player.getOpenInventory().getTopInventory().getItem(18).getType());
+    }
+
+    @Test
+    void staleEditorMenuIsDiscardedWhenTopInventoryChanges() throws ReflectiveOperationException {
+        Fixture fixture = newFixture();
+        PlayerMock player = MockBukkit.getMock().addPlayer();
+        player.addAttachment(fixture.plugin, "configurablecrafts.admin", true);
+        fixture.guiManager.openMain(player, 0, "");
+        fixture.guiManager.onClick(click(player, 10, ClickType.LEFT, InventoryAction.PICKUP_ALL));
+        fixture.guiManager.onClick(click(player, 11, ClickType.LEFT, InventoryAction.PICKUP_ALL));
+        player.openInventory(Bukkit.createInventory(player, 54, "Other Inventory"));
+
+        assertDoesNotThrow(() -> fixture.guiManager.onClick(click(player, 1, ClickType.LEFT, InventoryAction.PICKUP_ALL)));
+        assertFalse(openMenus(fixture.guiManager).containsKey(player.getUniqueId()));
+    }
+
+    @Test
+    void staleMainMenuIsDiscardedDuringBlink() throws ReflectiveOperationException {
+        Fixture fixture = newFixture();
+        ManagedRecipe recipe = sampleRecipe();
+        recipe.setEnabled(false);
+        fixture.registry.upsert(recipe);
+        PlayerMock player = MockBukkit.getMock().addPlayer();
+        fixture.guiManager.openMain(player, 0, "", RecipeListFilter.DISABLED);
+        player.openInventory(Bukkit.createInventory(player, 54, "Other Inventory"));
+
+        invokeBlink(fixture.guiManager);
+
+        assertFalse(openMenus(fixture.guiManager).containsKey(player.getUniqueId()));
+    }
+
     private Fixture newFixture() {
         PluginMock plugin = MockBukkit.createMockPlugin();
         ManagedRecipeRegistry registry = new ManagedRecipeRegistry(plugin, new RecipeRepository(new File(tempDir, "recipes.yml")));
@@ -151,6 +251,23 @@ class GuiManagerTest extends BukkitTest {
 
     private InventoryClickEvent click(PlayerMock player, int rawSlot, ClickType click, InventoryAction action) {
         return new InventoryClickEvent(player.getOpenInventory(), InventoryType.SlotType.CONTAINER, rawSlot, click, action);
+    }
+
+    private void invokeBlink(GuiManager guiManager) throws ReflectiveOperationException {
+        Method method = GuiManager.class.getDeclaredMethod("tickBlink");
+        method.setAccessible(true);
+        try {
+            method.invoke(guiManager);
+        } catch (InvocationTargetException exception) {
+            throw new AssertionError(exception.getCause());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<java.util.UUID, Object> openMenus(GuiManager guiManager) throws ReflectiveOperationException {
+        Field field = GuiManager.class.getDeclaredField("openMenus");
+        field.setAccessible(true);
+        return (Map<java.util.UUID, Object>) field.get(guiManager);
     }
 
     private record Fixture(PluginMock plugin, ManagedRecipeRegistry registry, GuiManager guiManager) {

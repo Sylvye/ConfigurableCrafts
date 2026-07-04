@@ -7,6 +7,9 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
 public final class ManagedRecipe {
+    public static final int DEFAULT_COOK_TIME_TICKS = 200;
+    public static final int DEFAULT_BREW_TIME_TICKS = 400;
+
     private String id;
     private String sourceKey;
     private RecipeKind kind;
@@ -14,10 +17,16 @@ public final class ManagedRecipe {
     private ItemStack result;
     private final IngredientSpec[] ingredients = new IngredientSpec[9];
     private RecipeConditions conditions = new RecipeConditions();
+    private RecipeLimit playerLimit = new RecipeLimit();
+    private RecipeLimit globalLimit = new RecipeLimit();
+    private float experience;
+    private int cookTimeTicks = DEFAULT_COOK_TIME_TICKS;
+    private int brewTimeTicks = DEFAULT_BREW_TIME_TICKS;
+    private boolean copyDataComponents = true;
 
     public ManagedRecipe(String id, RecipeKind kind) {
         this.id = sanitizeId(id == null || id.isBlank() ? "recipe_" + UUID.randomUUID() : id);
-        this.kind = kind == null ? RecipeKind.SHAPED : kind;
+        setKind(kind);
     }
 
     public static ManagedRecipe createCustom(RecipeKind kind) {
@@ -45,7 +54,7 @@ public final class ManagedRecipe {
     }
 
     public void setKind(RecipeKind kind) {
-        this.kind = kind == null ? RecipeKind.SHAPED : kind;
+        this.kind = kind == null ? RecipeKind.SHAPED : kind.canonical();
     }
 
     public boolean enabled() {
@@ -84,6 +93,54 @@ public final class ManagedRecipe {
         this.conditions = conditions == null ? new RecipeConditions() : conditions.copy();
     }
 
+    public RecipeLimit playerLimit() {
+        return playerLimit;
+    }
+
+    public void setPlayerLimit(RecipeLimit playerLimit) {
+        this.playerLimit = playerLimit == null ? new RecipeLimit() : playerLimit.copy();
+    }
+
+    public RecipeLimit globalLimit() {
+        return globalLimit;
+    }
+
+    public void setGlobalLimit(RecipeLimit globalLimit) {
+        this.globalLimit = globalLimit == null ? new RecipeLimit() : globalLimit.copy();
+    }
+
+    public float experience() {
+        return experience;
+    }
+
+    public void setExperience(float experience) {
+        this.experience = Math.max(0.0F, experience);
+    }
+
+    public int cookTimeTicks() {
+        return cookTimeTicks;
+    }
+
+    public void setCookTimeTicks(int cookTimeTicks) {
+        this.cookTimeTicks = Math.max(1, cookTimeTicks);
+    }
+
+    public int brewTimeTicks() {
+        return brewTimeTicks;
+    }
+
+    public void setBrewTimeTicks(int brewTimeTicks) {
+        this.brewTimeTicks = Math.max(1, brewTimeTicks);
+    }
+
+    public boolean copyDataComponents() {
+        return copyDataComponents;
+    }
+
+    public void setCopyDataComponents(boolean copyDataComponents) {
+        this.copyDataComponents = copyDataComponents;
+    }
+
     public boolean isOverride() {
         return sourceKey != null;
     }
@@ -107,6 +164,12 @@ public final class ManagedRecipe {
             copy.setIngredient(i, ingredients[i]);
         }
         copy.conditions = conditions.copy();
+        copy.playerLimit = playerLimit.copy();
+        copy.globalLimit = globalLimit.copy();
+        copy.experience = experience;
+        copy.cookTimeTicks = cookTimeTicks;
+        copy.brewTimeTicks = brewTimeTicks;
+        copy.copyDataComponents = copyDataComponents;
         return copy;
     }
 

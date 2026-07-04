@@ -19,10 +19,17 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.BlastingRecipe;
+import org.bukkit.inventory.CampfireRecipe;
+import org.bukkit.inventory.CookingRecipe;
+import org.bukkit.inventory.FurnaceRecipe;
 import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.RecipeChoice;
 import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.inventory.ShapelessRecipe;
+import org.bukkit.inventory.SmithingTransformRecipe;
+import org.bukkit.inventory.SmokingRecipe;
+import org.bukkit.inventory.StonecuttingRecipe;
 import org.bukkit.plugin.Plugin;
 
 public final class ManagedRecipeRegistry {
@@ -51,7 +58,7 @@ public final class ManagedRecipeRegistry {
             if (!NamespacedKey.MINECRAFT.equals(key.getNamespace())) {
                 continue;
             }
-            if (recipe instanceof ShapedRecipe || recipe instanceof ShapelessRecipe) {
+            if (isVanillaEditable(recipe)) {
                 vanillaRecipes.put(key, recipe);
             }
         }
@@ -123,6 +130,17 @@ public final class ManagedRecipeRegistry {
             readShapedIngredients(managed, shapedRecipe);
         } else if (recipe instanceof ShapelessRecipe shapelessRecipe) {
             readShapelessIngredients(managed, shapelessRecipe);
+        } else if (recipe instanceof CookingRecipe<?> cookingRecipe) {
+            managed.setIngredient(0, specFromChoice(cookingRecipe.getInputChoice()));
+            managed.setExperience(cookingRecipe.getExperience());
+            managed.setCookTimeTicks(cookingRecipe.getCookingTime());
+        } else if (recipe instanceof StonecuttingRecipe stonecuttingRecipe) {
+            managed.setIngredient(0, specFromChoice(stonecuttingRecipe.getInputChoice()));
+        } else if (recipe instanceof SmithingTransformRecipe smithingRecipe) {
+            managed.setIngredient(0, specFromChoice(smithingRecipe.getTemplate()));
+            managed.setIngredient(1, specFromChoice(smithingRecipe.getBase()));
+            managed.setIngredient(2, specFromChoice(smithingRecipe.getAddition()));
+            managed.setCopyDataComponents(smithingRecipe.willCopyDataComponents());
         }
         return managed;
     }
@@ -135,8 +153,9 @@ public final class ManagedRecipeRegistry {
         if (result == null || result.getType().isAir()) {
             return "Set a result item before saving.";
         }
-        if (nonEmptyIngredients(recipe).isEmpty()) {
-            return "Set at least one ingredient before saving.";
+        String invalidShape = invalidShape(recipe);
+        if (invalidShape != null) {
+            return invalidShape;
         }
         String invalidConditions = invalidConditions(recipe);
         if (invalidConditions != null) {
@@ -228,12 +247,41 @@ public final class ManagedRecipeRegistry {
     }
 
     private Recipe createBukkitRecipe(ManagedRecipe recipe) {
-        if (recipe.kind() == RecipeKind.SHAPELESS) {
+        RecipeKind kind = recipe.kind().canonical();
+        if (kind == RecipeKind.SHAPELESS) {
             ShapelessRecipe shapelessRecipe = new ShapelessRecipe(recipe.managedKey(plugin), recipe.result());
             for (IngredientSpec spec : nonEmptyIngredients(recipe)) {
                 shapelessRecipe.addIngredient(IngredientMatcher.toRecipeChoice(spec));
             }
             return shapelessRecipe;
+        }
+        if (kind == RecipeKind.SMELTING) {
+            return new FurnaceRecipe(recipe.managedKey(plugin), recipe.result(), IngredientMatcher.toRecipeChoice(recipe.ingredient(0)), recipe.experience(), recipe.cookTimeTicks());
+        }
+        if (kind == RecipeKind.SMOKING) {
+            return new SmokingRecipe(recipe.managedKey(plugin), recipe.result(), IngredientMatcher.toRecipeChoice(recipe.ingredient(0)), recipe.experience(), recipe.cookTimeTicks());
+        }
+        if (kind == RecipeKind.BLASTING) {
+            return new BlastingRecipe(recipe.managedKey(plugin), recipe.result(), IngredientMatcher.toRecipeChoice(recipe.ingredient(0)), recipe.experience(), recipe.cookTimeTicks());
+        }
+        if (kind == RecipeKind.CAMPFIRE) {
+            return new CampfireRecipe(recipe.managedKey(plugin), recipe.result(), IngredientMatcher.toRecipeChoice(recipe.ingredient(0)), recipe.experience(), recipe.cookTimeTicks());
+        }
+        if (kind == RecipeKind.STONECUTTING) {
+            return new StonecuttingRecipe(recipe.managedKey(plugin), recipe.result(), IngredientMatcher.toRecipeChoice(recipe.ingredient(0)));
+        }
+        if (kind == RecipeKind.SMITHING) {
+            return new SmithingTransformRecipe(
+                recipe.managedKey(plugin),
+                recipe.result(),
+                IngredientMatcher.toRecipeChoice(recipe.ingredient(0)),
+                IngredientMatcher.toRecipeChoice(recipe.ingredient(1)),
+                IngredientMatcher.toRecipeChoice(recipe.ingredient(2)),
+                recipe.copyDataComponents()
+            );
+        }
+        if (kind == RecipeKind.BREWING) {
+            return null;
         }
         return createShapedRecipe(recipe);
     }
@@ -269,6 +317,9 @@ public final class ManagedRecipeRegistry {
     }
 
     private String conflictDescription(ManagedRecipe recipe) {
+        if (!recipe.kind().isCraftingTable()) {
+            return null;
+        }
         String signature = RecipePattern.signature(recipe);
         for (ManagedRecipe other : recipes.values()) {
             if (other.id().equals(recipe.id())) {
@@ -290,6 +341,14 @@ public final class ManagedRecipeRegistry {
     }
 
     private String invalidConditions(ManagedRecipe recipe) {
+        if (recipe.kind().isBlockDriven()) {
+            if (recipe.playerLimit().enabled()) {
+                return recipe.kind().displayName() + " recipes cannot use per-player limits.";
+            }
+            if (recipe.conditions().minimumExperienceLevel() > 0) {
+                return recipe.kind().displayName() + " recipes cannot require player experience levels.";
+            }
+        }
         List<String> invalidDimensions = invalidDimensions(recipe.conditions().dimensions());
         if (!invalidDimensions.isEmpty()) {
             return "Unknown dimension(s): " + String.join(", ", invalidDimensions);
@@ -299,6 +358,42 @@ public final class ManagedRecipeRegistry {
             return "Unknown biome(s): " + String.join(", ", invalidBiomes);
         }
         return null;
+    }
+
+    private String invalidShape(ManagedRecipe recipe) {
+        RecipeKind kind = recipe.kind().canonical();
+        if (kind == RecipeKind.SHAPED || kind == RecipeKind.SHAPELESS) {
+            return nonEmptyIngredients(recipe).isEmpty() ? "Set at least one ingredient before saving." : null;
+        }
+        if (kind == RecipeKind.BREWING) {
+            if (isEmptyIngredient(recipe, 0)) {
+                return "Set a potion input before saving.";
+            }
+            if (isEmptyIngredient(recipe, 1)) {
+                return "Set a brewing ingredient before saving.";
+            }
+            return null;
+        }
+        if (kind.isCooking() || kind == RecipeKind.STONECUTTING) {
+            return isEmptyIngredient(recipe, 0) ? "Set an input item before saving." : null;
+        }
+        if (kind == RecipeKind.SMITHING) {
+            if (isEmptyIngredient(recipe, 0)) {
+                return "Set a smithing template before saving.";
+            }
+            if (isEmptyIngredient(recipe, 1)) {
+                return "Set smithing equipment before saving.";
+            }
+            if (isEmptyIngredient(recipe, 2)) {
+                return "Set a smithing addition before saving.";
+            }
+        }
+        return null;
+    }
+
+    private boolean isEmptyIngredient(ManagedRecipe recipe, int index) {
+        IngredientSpec spec = recipe.ingredient(index);
+        return spec == null || spec.isEmpty();
     }
 
     private String invalidIngredients(ManagedRecipe recipe) {
@@ -349,7 +444,36 @@ public final class ManagedRecipeRegistry {
     }
 
     private RecipeKind kindOf(Recipe recipe) {
-        return recipe instanceof ShapelessRecipe ? RecipeKind.SHAPELESS : RecipeKind.SHAPED;
+        if (recipe instanceof ShapelessRecipe) {
+            return RecipeKind.SHAPELESS;
+        }
+        if (recipe instanceof FurnaceRecipe) {
+            return RecipeKind.SMELTING;
+        }
+        if (recipe instanceof SmokingRecipe) {
+            return RecipeKind.SMOKING;
+        }
+        if (recipe instanceof BlastingRecipe) {
+            return RecipeKind.BLASTING;
+        }
+        if (recipe instanceof CampfireRecipe) {
+            return RecipeKind.CAMPFIRE;
+        }
+        if (recipe instanceof StonecuttingRecipe) {
+            return RecipeKind.STONECUTTING;
+        }
+        if (recipe instanceof SmithingTransformRecipe) {
+            return RecipeKind.SMITHING;
+        }
+        return RecipeKind.SHAPED;
+    }
+
+    private boolean isVanillaEditable(Recipe recipe) {
+        return recipe instanceof ShapedRecipe
+            || recipe instanceof ShapelessRecipe
+            || recipe instanceof CookingRecipe<?>
+            || recipe instanceof StonecuttingRecipe
+            || recipe instanceof SmithingTransformRecipe;
     }
 
     private void readShapedIngredients(ManagedRecipe managed, ShapedRecipe shapedRecipe) {

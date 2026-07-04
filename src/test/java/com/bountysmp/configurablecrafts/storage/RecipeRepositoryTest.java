@@ -28,6 +28,8 @@ class RecipeRepositoryTest extends BukkitTest {
         recipe.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.APPLE)));
         recipe.conditions().dimensions().add("minecraft:overworld");
         recipe.conditions().setMinimumExperienceLevel(7);
+        recipe.playerLimit().set(5, 600);
+        recipe.globalLimit().set(20, 3600);
 
         repository.save(List.of(recipe));
         List<ManagedRecipe> loaded = repository.load();
@@ -41,6 +43,10 @@ class RecipeRepositoryTest extends BukkitTest {
         assertEquals(Material.GOLDEN_APPLE, copy.result().getType());
         assertEquals(Material.APPLE, copy.ingredient(0).sample().getType());
         assertEquals(7, copy.conditions().minimumExperienceLevel());
+        assertEquals(5, copy.playerLimit().crafts());
+        assertEquals(600, copy.playerLimit().windowSeconds());
+        assertEquals(20, copy.globalLimit().crafts());
+        assertEquals(3600, copy.globalLimit().windowSeconds());
     }
 
     @Test
@@ -56,5 +62,31 @@ class RecipeRepositoryTest extends BukkitTest {
         IngredientSpec spec = loaded.getFirst().ingredient(4);
         assertTrue(spec.isTagOnly());
         assertEquals("minecraft:logs", spec.tagKey());
+    }
+
+    @Test
+    void yamlRoundTripPreservesWorkstationFields() {
+        RecipeRepository repository = new RecipeRepository(new File(tempDir, "recipes.yml"));
+        ManagedRecipe cooking = new ManagedRecipe("smoke", RecipeKind.SMOKING);
+        cooking.setResult(new ItemStack(Material.COOKED_BEEF));
+        cooking.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.BEEF)));
+        cooking.setExperience(0.35F);
+        cooking.setCookTimeTicks(120);
+        ManagedRecipe brewing = new ManagedRecipe("brew", RecipeKind.BREWING);
+        brewing.setResult(new ItemStack(Material.POTION));
+        brewing.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.POTION)));
+        brewing.setIngredient(1, IngredientSpec.fromSample(new ItemStack(Material.REDSTONE)));
+        brewing.setBrewTimeTicks(80);
+        ManagedRecipe smithing = new ManagedRecipe("smith", RecipeKind.SMITHING);
+        smithing.setResult(new ItemStack(Material.DIAMOND_SWORD));
+        smithing.setCopyDataComponents(false);
+
+        repository.save(List.of(cooking, brewing, smithing));
+        List<ManagedRecipe> loaded = repository.load();
+
+        assertEquals(0.35F, loaded.get(0).experience());
+        assertEquals(120, loaded.get(0).cookTimeTicks());
+        assertEquals(80, loaded.get(1).brewTimeTicks());
+        assertTrue(!loaded.get(2).copyDataComponents());
     }
 }

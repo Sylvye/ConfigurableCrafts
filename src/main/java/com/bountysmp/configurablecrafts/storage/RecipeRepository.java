@@ -5,6 +5,7 @@ import com.bountysmp.configurablecrafts.model.ManagedRecipe;
 import com.bountysmp.configurablecrafts.model.MatcherType;
 import com.bountysmp.configurablecrafts.model.RecipeConditions;
 import com.bountysmp.configurablecrafts.model.RecipeKind;
+import com.bountysmp.configurablecrafts.model.RecipeLimit;
 import com.bountysmp.configurablecrafts.model.WeatherMode;
 import java.io.File;
 import java.io.IOException;
@@ -81,6 +82,13 @@ public final class RecipeRepository {
             }
         }
         recipe.setConditions(readConditions(section.getConfigurationSection("conditions")));
+        ConfigurationSection limits = section.getConfigurationSection("limits");
+        recipe.setPlayerLimit(readLimit(limits == null ? null : limits.getConfigurationSection("player")));
+        recipe.setGlobalLimit(readLimit(limits == null ? null : limits.getConfigurationSection("global")));
+        recipe.setExperience((float) section.getDouble("experience", 0.0D));
+        recipe.setCookTimeTicks(section.getInt("cook-time-ticks", ManagedRecipe.DEFAULT_COOK_TIME_TICKS));
+        recipe.setBrewTimeTicks(section.getInt("brew-time-ticks", ManagedRecipe.DEFAULT_BREW_TIME_TICKS));
+        recipe.setCopyDataComponents(section.getBoolean("copy-data-components", true));
         return recipe;
     }
 
@@ -130,6 +138,13 @@ public final class RecipeRepository {
         return conditions;
     }
 
+    private RecipeLimit readLimit(ConfigurationSection section) {
+        if (section == null) {
+            return new RecipeLimit();
+        }
+        return new RecipeLimit(section.getInt("crafts", 0), section.getLong("window-seconds", 0L));
+    }
+
     private void writeRecipe(ConfigurationSection section, ManagedRecipe recipe) {
         section.set("type", recipe.kind().name());
         section.set("source-key", recipe.sourceKey());
@@ -143,6 +158,19 @@ public final class RecipeRepository {
             }
         }
         writeConditions(section.createSection("conditions"), recipe.conditions());
+        ConfigurationSection limits = section.createSection("limits");
+        writeLimit(limits.createSection("player"), recipe.playerLimit());
+        writeLimit(limits.createSection("global"), recipe.globalLimit());
+        if (recipe.kind().isCooking()) {
+            section.set("experience", recipe.experience());
+            section.set("cook-time-ticks", recipe.cookTimeTicks());
+        }
+        if (recipe.kind() == RecipeKind.BREWING) {
+            section.set("brew-time-ticks", recipe.brewTimeTicks());
+        }
+        if (recipe.kind() == RecipeKind.SMITHING) {
+            section.set("copy-data-components", recipe.copyDataComponents());
+        }
     }
 
     private void writeIngredient(ConfigurationSection section, IngredientSpec spec) {
@@ -164,5 +192,10 @@ public final class RecipeRepository {
         section.set("biomes", new ArrayList<>(conditions.biomes()));
         section.set("weather", conditions.weather().name());
         section.set("minimum-experience-level", conditions.minimumExperienceLevel());
+    }
+
+    private void writeLimit(ConfigurationSection section, RecipeLimit limit) {
+        section.set("crafts", limit.crafts());
+        section.set("window-seconds", limit.windowSeconds());
     }
 }

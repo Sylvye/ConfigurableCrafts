@@ -46,6 +46,24 @@ class ManagedRecipeRegistryTest extends BukkitTest {
         assertEquals("Unknown item tag: minecraft:not_a_tag", registry.validateForSave(recipe));
     }
 
+    @Test
+    void validateForSaveRejectsBrewingPerPlayerLimits() {
+        ManagedRecipeRegistry registry = registry();
+        ManagedRecipe recipe = validBrewingRecipe();
+        recipe.playerLimit().set(1, 60);
+
+        assertEquals("Brewing recipes cannot use per-player limits.", registry.validateForSave(recipe));
+    }
+
+    @Test
+    void validateForSaveRejectsBrewingExperienceRequirement() {
+        ManagedRecipeRegistry registry = registry();
+        ManagedRecipe recipe = validBrewingRecipe();
+        recipe.conditions().setMinimumExperienceLevel(1);
+
+        assertEquals("Brewing recipes cannot require player experience levels.", registry.validateForSave(recipe));
+    }
+
     private ManagedRecipeRegistry registry() {
         return new ManagedRecipeRegistry(MockBukkit.createMockPlugin(), new RecipeRepository(new File(tempDir, "recipes.yml")));
     }
@@ -54,6 +72,14 @@ class ManagedRecipeRegistryTest extends BukkitTest {
         ManagedRecipe recipe = new ManagedRecipe("valid", RecipeKind.SHAPED);
         recipe.setResult(new ItemStack(Material.DIAMOND));
         recipe.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.STICK)));
+        return recipe;
+    }
+
+    private ManagedRecipe validBrewingRecipe() {
+        ManagedRecipe recipe = new ManagedRecipe("valid_brew", RecipeKind.BREWING);
+        recipe.setResult(new ItemStack(Material.POTION));
+        recipe.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.POTION)));
+        recipe.setIngredient(1, IngredientSpec.fromSample(new ItemStack(Material.REDSTONE)));
         return recipe;
     }
 }

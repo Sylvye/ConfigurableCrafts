@@ -1,6 +1,7 @@
 package com.bountysmp.configurablecrafts.command;
 
 import com.bountysmp.configurablecrafts.gui.GuiManager;
+import com.bountysmp.configurablecrafts.model.RecipeListFilter;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -24,7 +25,7 @@ public final class ConfigurableCraftsCommand implements CommandExecutor {
             player.sendMessage("You do not have permission to use ConfigurableCrafts.");
             return true;
         }
-        guiManager.openMain(player, 0, "");
+        guiManager.openMain(player, 0, "", args.length == 0 ? RecipeListFilter.ALL : RecipeListFilter.parse(args[0]));
         return true;
     }
 }

@@ -7,9 +7,12 @@ import com.bountysmp.configurablecrafts.model.ManagedRecipe;
 import com.bountysmp.configurablecrafts.model.MatcherType;
 import com.bountysmp.configurablecrafts.model.RecipeConditions;
 import com.bountysmp.configurablecrafts.model.RecipeKind;
+import com.bountysmp.configurablecrafts.model.RecipeLimit;
+import com.bountysmp.configurablecrafts.model.RecipeListFilter;
 import com.bountysmp.configurablecrafts.util.ItemText;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -50,15 +53,16 @@ public final class GuiManager implements Listener {
     };
     private static final int[] GRID_SLOTS = {10, 11, 12, 19, 20, 21, 28, 29, 30};
     private static final int RESULT_SLOT = 24;
+    private static final int MAIN_FILTER_SLOT = 16;
     private static final int TYPE_PICKER_BACK_SLOT = 49;
     private static final WorkstationOption[] WORKSTATION_OPTIONS = {
-        new WorkstationOption(28, Material.BREWING_STAND, "Brewing", "Potion ingredient recipes."),
-        new WorkstationOption(29, Material.FURNACE, "Smelting", "Furnace input and output recipes."),
-        new WorkstationOption(30, Material.SMOKER, "Smoking", "Food cooking recipes."),
-        new WorkstationOption(31, Material.BLAST_FURNACE, "Blasting", "Ore and metal processing recipes."),
-        new WorkstationOption(32, Material.CAMPFIRE, "Campfire Cooking", "Campfire cooking recipes."),
-        new WorkstationOption(33, Material.STONECUTTER, "Stonecutting", "Stonecutter conversion recipes."),
-        new WorkstationOption(34, Material.SMITHING_TABLE, "Smithing", "Template and upgrade recipes.")
+        new WorkstationOption(28, Material.BREWING_STAND, RecipeKind.BREWING, "Brewing", "Potion ingredient recipes."),
+        new WorkstationOption(29, Material.FURNACE, RecipeKind.SMELTING, "Smelting", "Furnace input and output recipes."),
+        new WorkstationOption(30, Material.SMOKER, RecipeKind.SMOKING, "Smoking", "Food cooking recipes."),
+        new WorkstationOption(31, Material.BLAST_FURNACE, RecipeKind.BLASTING, "Blasting", "Ore and metal processing recipes."),
+        new WorkstationOption(32, Material.CAMPFIRE, RecipeKind.CAMPFIRE, "Campfire Cooking", "Campfire cooking recipes."),
+        new WorkstationOption(33, Material.STONECUTTER, RecipeKind.STONECUTTING, "Stonecutting", "Stonecutter conversion recipes."),
+        new WorkstationOption(34, Material.SMITHING_TABLE, RecipeKind.SMITHING, "Smithing", "Template and upgrade recipes.")
     };
 
     private final Plugin plugin;
@@ -67,6 +71,7 @@ public final class GuiManager implements Listener {
     private final Map<UUID, OpenMenu> openMenus = new ConcurrentHashMap<>();
     private final Map<UUID, EditorSession> editorSessions = new ConcurrentHashMap<>();
     private BukkitTask blinkTask;
+    private boolean disabledBlink;
 
     public GuiManager(Plugin plugin, ManagedRecipeRegistry registry, ChatPromptManager prompts) {
         this.plugin = plugin;
@@ -75,6 +80,10 @@ public final class GuiManager implements Listener {
     }
 
     public void openMain(Player player, int page, String query) {
+        openMain(player, page, query, RecipeListFilter.ALL);
+    }
+
+    public void openMain(Player player, int page, String query, RecipeListFilter filter) {
         boolean admin = isAdmin(player);
         Inventory inventory = Bukkit.createInventory(player, 54, admin ? "ConfigurableCrafts" : "Custom Recipes");
         fill(inventory);
@@ -83,10 +92,11 @@ public final class GuiManager implements Listener {
             inventory.setItem(12, GuiUtil.item(Material.CRAFTING_TABLE, GuiUtil.Tone.INFO, "Edit Vanilla Recipe", "Browse and override vanilla crafting recipes."));
             inventory.setItem(14, GuiUtil.item(Material.OAK_SIGN, GuiUtil.Tone.WARNING, "Search Modified Recipes", query.isBlank() ? "No search active." : "Search: " + query));
         } else {
-            inventory.setItem(13, GuiUtil.item(Material.BOOK, GuiUtil.Tone.INFO, "Modified Recipes", "Enabled custom and modified recipes."));
+            inventory.setItem(13, GuiUtil.item(Material.BOOK, GuiUtil.Tone.INFO, "Recipes", "Custom, modified, and disabled recipes."));
         }
+        inventory.setItem(MAIN_FILTER_SLOT, filterItem(filter));
 
-        List<ManagedRecipe> recipes = filteredManagedRecipes(player, query);
+        List<ManagedRecipe> recipes = filteredManagedRecipes(query, filter);
         int maxPage = maxPage(recipes.size(), MAIN_LIST_SLOTS.length);
         int safePage = clampPage(page, maxPage);
         for (int i = 0; i < MAIN_LIST_SLOTS.length; i++) {
@@ -95,13 +105,13 @@ public final class GuiManager implements Listener {
                 break;
             }
             ManagedRecipe recipe = recipes.get(index);
-            inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin));
+            inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink));
         }
         inventory.setItem(45, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Previous Page", "Page " + (safePage + 1) + " / " + (maxPage + 1)));
         inventory.setItem(49, GuiUtil.item(Material.PAPER, GuiUtil.Tone.NEUTRAL, "Page " + (safePage + 1) + " / " + (maxPage + 1)));
         inventory.setItem(53, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Next Page", "Page " + (safePage + 1) + " / " + (maxPage + 1)));
         player.openInventory(inventory);
-        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.MAIN, safePage, query, null, null));
+        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.MAIN, safePage, query, null, filter, inventory));
     }
 
     public void startBlinkTask() {
@@ -125,6 +135,10 @@ public final class GuiManager implements Listener {
         }
         OpenMenu open = openMenus.get(player.getUniqueId());
         if (open == null) {
+            return;
+        }
+        if (!isCurrentMenu(event.getView().getTopInventory(), open)) {
+            discardStaleMenu(player, open);
             return;
         }
         if (event.getClick() == ClickType.DOUBLE_CLICK || event.getAction() == InventoryAction.COLLECT_TO_CURSOR) {
@@ -207,22 +221,26 @@ public final class GuiManager implements Listener {
             return;
         }
         if (admin && slot == 14) {
-            promptMainSearch(player);
+            promptMainSearch(player, open.filter);
+            return;
+        }
+        if (slot == MAIN_FILTER_SLOT) {
+            openMain(player, 0, open.query, open.filter.next());
             return;
         }
         if (slot == 45) {
-            openMain(player, open.page - 1, open.query);
+            openMain(player, open.page - 1, open.query, open.filter);
             return;
         }
         if (slot == 53) {
-            openMain(player, open.page + 1, open.query);
+            openMain(player, open.page + 1, open.query, open.filter);
             return;
         }
         int listIndex = indexOf(MAIN_LIST_SLOTS, slot);
         if (listIndex < 0) {
             return;
         }
-        List<ManagedRecipe> recipes = filteredManagedRecipes(player, open.query);
+        List<ManagedRecipe> recipes = filteredManagedRecipes(open.query, open.filter);
         int recipeIndex = open.page * MAIN_LIST_SLOTS.length + listIndex;
         if (recipeIndex >= recipes.size()) {
             return;
@@ -246,7 +264,7 @@ public final class GuiManager implements Listener {
         }
         WorkstationOption workstation = workstationOption(slot);
         if (workstation != null) {
-            player.sendMessage(workstation.name() + " recipes are not editable yet.");
+            openEditor(player, new EditorSession(ManagedRecipe.createCustom(workstation.kind()), false));
             return;
         }
         if (slot == TYPE_PICKER_BACK_SLOT) {
@@ -303,7 +321,7 @@ public final class GuiManager implements Listener {
         if (session == null) {
             return;
         }
-        int ingredientIndex = ingredientIndex(slot);
+        int ingredientIndex = ingredientIndex(session.recipe(), slot);
         if (ingredientIndex >= 0) {
             handleEditorItemClick(player, event, session, ingredientIndex, false);
             return;
@@ -519,6 +537,10 @@ public final class GuiManager implements Listener {
             });
         } else if (slot == 23) {
             conditions.setWeather(conditions.weather().next());
+        } else if (slot == 25) {
+            promptLimit(player, session, session.recipe().playerLimit(), "per-player");
+        } else if (slot == 34) {
+            promptLimit(player, session, session.recipe().globalLimit(), "global");
         } else if (slot == 32) {
             promptEditor(player, session, "Type minimum experience level. Type 0 for no minimum level.", text -> {
                 if (text.equalsIgnoreCase("cancel")) {
@@ -530,11 +552,84 @@ public final class GuiManager implements Listener {
                     player.sendMessage("Invalid level: " + text);
                 }
             });
+        } else if (slot == 43 && session.recipe().kind().isCooking()) {
+            promptPositiveInt(player, session, "Type cook time in ticks.", session.recipe()::setCookTimeTicks);
+        } else if (slot == 44 && session.recipe().kind().isCooking()) {
+            promptExperience(player, session);
+        } else if (slot == 43 && session.recipe().kind() == RecipeKind.BREWING) {
+            promptPositiveInt(player, session, "Type brew time in ticks.", session.recipe()::setBrewTimeTicks);
+        } else if (slot == 43 && session.recipe().kind() == RecipeKind.SMITHING) {
+            session.recipe().setCopyDataComponents(!session.recipe().copyDataComponents());
         }
+    }
+
+    private void promptPositiveInt(Player player, EditorSession session, String message, java.util.function.IntConsumer consumer) {
+        promptEditor(player, session, message, text -> {
+            if (text.equalsIgnoreCase("cancel")) {
+                return;
+            }
+            try {
+                int value = Integer.parseInt(text.trim());
+                if (value <= 0) {
+                    player.sendMessage("Value must be greater than 0.");
+                    return;
+                }
+                consumer.accept(value);
+            } catch (NumberFormatException exception) {
+                player.sendMessage("Invalid number: " + text);
+            }
+        });
+    }
+
+    private void promptExperience(Player player, EditorSession session) {
+        promptEditor(player, session, "Type experience reward, e.g. 0.35.", text -> {
+            if (text.equalsIgnoreCase("cancel")) {
+                return;
+            }
+            try {
+                float value = Float.parseFloat(text.trim());
+                if (value < 0.0F) {
+                    player.sendMessage("Experience cannot be negative.");
+                    return;
+                }
+                session.recipe().setExperience(value);
+            } catch (NumberFormatException exception) {
+                player.sendMessage("Invalid experience: " + text);
+            }
+        });
+    }
+
+    private void promptLimit(Player player, EditorSession session, RecipeLimit limit, String label) {
+        promptEditor(player, session, "Type " + label + " limit as '<crafts> <time>', e.g. 5 10m, 20 1h. Type clear to disable.", text -> {
+            if (text.equalsIgnoreCase("cancel")) {
+                return;
+            }
+            if (text.equalsIgnoreCase("clear")) {
+                limit.clear();
+                return;
+            }
+            String[] parts = text.trim().split("\\s+");
+            if (parts.length != 2) {
+                player.sendMessage("Invalid limit. Use '<crafts> <time>', e.g. 5 10m.");
+                return;
+            }
+            try {
+                int crafts = Integer.parseInt(parts[0]);
+                long seconds = parseDurationSeconds(parts[1]);
+                if (crafts <= 0 || seconds <= 0L) {
+                    player.sendMessage("Crafts and time must be greater than 0.");
+                    return;
+                }
+                limit.set(crafts, seconds);
+            } catch (NumberFormatException exception) {
+                player.sendMessage("Invalid limit. Use '<crafts> <time>', e.g. 5 10m.");
+            }
+        });
     }
 
     private void saveEditor(Player player, EditorSession session) {
         session.applyItemsToRecipe();
+        normalizeActiveIngredients(session.recipe());
         String error = registry.validateForSave(session.recipe());
         if (error != null) {
             player.sendMessage(error);
@@ -555,13 +650,13 @@ public final class GuiManager implements Listener {
         inventory.setItem(4, GuiUtil.item(Material.WRITABLE_BOOK, GuiUtil.Tone.INFO, "Recipe Type", "Choose a supported crafting type."));
         inventory.setItem(11, GuiUtil.item(Material.CRAFTING_TABLE, GuiUtil.Tone.SUCCESS, "Shaped Crafting", "Supported", "Uses the exact grid layout."));
         inventory.setItem(15, GuiUtil.item(Material.CHEST, GuiUtil.Tone.SUCCESS, "Shapeless Crafting", "Supported", "Ingredients can be placed in any order."));
-        inventory.setItem(22, GuiUtil.item(Material.COPPER_BULB, GuiUtil.Tone.WARNING, "Workstation Recipes", "Shown for planning.", "Not editable yet."));
+        inventory.setItem(22, GuiUtil.item(Material.COPPER_BULB, GuiUtil.Tone.SUCCESS, "Workstation Recipes", "Supported workstation recipe types."));
         for (WorkstationOption option : WORKSTATION_OPTIONS) {
             inventory.setItem(option.slot(), workstationItem(option));
         }
         inventory.setItem(TYPE_PICKER_BACK_SLOT, GuiUtil.item(Material.BARRIER, GuiUtil.Tone.DANGER, "Back"));
         player.openInventory(inventory);
-        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.TYPE_PICKER, 0, "", null, null));
+        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.TYPE_PICKER, 0, "", null, null, inventory));
     }
 
     private void openVanillaList(Player player, int page, String query) {
@@ -589,7 +684,7 @@ public final class GuiManager implements Listener {
         inventory.setItem(50, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Next Page"));
         inventory.setItem(53, GuiUtil.item(Material.PAPER, GuiUtil.Tone.NEUTRAL, "Page " + (safePage + 1) + " / " + (maxPage + 1)));
         player.openInventory(inventory);
-        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.VANILLA_LIST, safePage, query, null, null));
+        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.VANILLA_LIST, safePage, query, null, null, inventory));
     }
 
     private void openConfirmRemove(Player player, String recipeId) {
@@ -598,7 +693,7 @@ public final class GuiManager implements Listener {
         inventory.setItem(11, GuiUtil.item(Material.RED_CONCRETE, GuiUtil.Tone.DANGER, "Confirm Remove", "Delete custom recipe or revert vanilla override."));
         inventory.setItem(15, GuiUtil.item(Material.LIME_CONCRETE, GuiUtil.Tone.SUCCESS, "Cancel"));
         player.openInventory(inventory);
-        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.CONFIRM_REMOVE, 0, "", recipeId, null));
+        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.CONFIRM_REMOVE, 0, "", recipeId, null, inventory));
     }
 
     private void openEditor(Player player, EditorSession session) {
@@ -606,18 +701,22 @@ public final class GuiManager implements Listener {
         Inventory inventory = Bukkit.createInventory(player, 54, session.readOnly() ? "View Recipe" : "Edit Recipe");
         renderEditor(player, session, inventory);
         player.openInventory(inventory);
-        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.EDITOR, 0, "", session.recipe().id(), null));
+        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.EDITOR, 0, "", session.recipe().id(), null, inventory));
     }
 
     private void renderEditor(Player player, EditorSession session, Inventory inventory) {
         fill(inventory);
         for (int i = 0; i < GRID_SLOTS.length; i++) {
+            if (!isActiveIngredient(session.recipe(), i)) {
+                inventory.setItem(GRID_SLOTS[i], GuiUtil.filler());
+                continue;
+            }
             ItemStack ingredient = session.ingredient(i);
             IngredientSpec spec = session.ingredientSpec(i);
             if (GuiUtil.isEmpty(ingredient) && spec != null && spec.isTagOnly()) {
                 inventory.setItem(GRID_SLOTS[i], displayTagIngredient(spec, 0));
             } else {
-                inventory.setItem(GRID_SLOTS[i], GuiUtil.isEmpty(ingredient) ? GuiUtil.emptySlot() : displayIngredient(session, ingredient));
+                inventory.setItem(GRID_SLOTS[i], GuiUtil.isEmpty(ingredient) ? ingredientPlaceholder(session.recipe(), i) : displayIngredient(session, ingredient));
             }
         }
         ItemStack result = session.result();
@@ -658,13 +757,41 @@ public final class GuiManager implements Listener {
         ));
     }
 
+    private ItemStack ingredientPlaceholder(ManagedRecipe recipe, int index) {
+        String name = switch (recipe.kind().canonical()) {
+            case BREWING -> index == 0 ? "Potion Input" : "Brewing Ingredient";
+            case SMITHING -> switch (index) {
+                case 0 -> "Smithing Template";
+                case 1 -> "Equipment";
+                default -> "Addition";
+            };
+            case SMELTING, SMOKING, BLASTING, CAMPFIRE, STONECUTTING, COOKING -> "Input Item";
+            default -> "Ingredient";
+        };
+        return GuiUtil.item(Material.GRAY_STAINED_GLASS_PANE, GuiUtil.Tone.MUTED, name, "Place an item here.", "Right-click with an empty hand to set an item tag.");
+    }
+
     private void renderRecipeControls(Inventory inventory, EditorSession session) {
         RecipeConditions conditions = session.recipe().conditions();
         inventory.setItem(14, GuiUtil.item(session.recipe().enabled() ? Material.LIME_DYE : Material.GRAY_DYE, session.recipe().enabled() ? GuiUtil.Tone.SUCCESS : GuiUtil.Tone.MUTED, "Recipe Enabled: " + session.recipe().enabled(), "Click to toggle."));
         inventory.setItem(15, GuiUtil.item(Material.ENDER_EYE, GuiUtil.Tone.WARNING, "Allowed Dimensions", conditions.dimensions().isEmpty() ? "Any dimension." : String.join(", ", conditions.dimensions())));
         inventory.setItem(16, GuiUtil.item(Material.GRASS_BLOCK, GuiUtil.Tone.WARNING, "Allowed Biomes", conditions.biomes().isEmpty() ? "Any biome." : String.join(", ", conditions.biomes())));
         inventory.setItem(23, GuiUtil.item(Material.WATER_BUCKET, GuiUtil.Tone.WARNING, "Weather: " + conditions.weather().displayName(), "Click to cycle."));
+        inventory.setItem(25, limitItem("Per-Player Limit", session.recipe().playerLimit()));
         inventory.setItem(32, GuiUtil.item(Material.EXPERIENCE_BOTTLE, GuiUtil.Tone.WARNING, "Minimum XP Level: " + conditions.minimumExperienceLevel(), "Click to edit."));
+        inventory.setItem(34, limitItem("Global Limit", session.recipe().globalLimit()));
+        renderWorkstationControls(inventory, session.recipe());
+    }
+
+    private void renderWorkstationControls(Inventory inventory, ManagedRecipe recipe) {
+        if (recipe.kind().isCooking()) {
+            inventory.setItem(43, GuiUtil.item(Material.CLOCK, GuiUtil.Tone.WARNING, "Cook Time: " + recipe.cookTimeTicks() + " ticks", "Click to edit."));
+            inventory.setItem(44, GuiUtil.item(Material.EXPERIENCE_BOTTLE, GuiUtil.Tone.WARNING, "Experience: " + recipe.experience(), "Click to edit."));
+        } else if (recipe.kind() == RecipeKind.BREWING) {
+            inventory.setItem(43, GuiUtil.item(Material.CLOCK, GuiUtil.Tone.WARNING, "Brew Time: " + recipe.brewTimeTicks() + " ticks", "Click to edit."));
+        } else if (recipe.kind() == RecipeKind.SMITHING) {
+            inventory.setItem(43, GuiUtil.item(recipe.copyDataComponents() ? Material.LIME_DYE : Material.GRAY_DYE, recipe.copyDataComponents() ? GuiUtil.Tone.SUCCESS : GuiUtil.Tone.MUTED, "Copy Data Components: " + recipe.copyDataComponents(), "Click to toggle."));
+        }
     }
 
     private void renderMatcherControls(Inventory inventory, EditorSession session) {
@@ -692,14 +819,30 @@ public final class GuiManager implements Listener {
     }
 
     private void tickBlink() {
+        disabledBlink = !disabledBlink;
         for (Player player : Bukkit.getOnlinePlayers()) {
             OpenMenu open = openMenus.get(player.getUniqueId());
             EditorSession session = editorSessions.get(player.getUniqueId());
-            if (open == null || open.screen != Screen.EDITOR || session == null) {
+            if (open == null) {
+                continue;
+            }
+            Inventory inventory = player.getOpenInventory().getTopInventory();
+            if (open.screen == Screen.MAIN) {
+                if (!isCurrentMenu(inventory, open)) {
+                    discardStaleMenu(player, open);
+                    continue;
+                }
+                renderMainRecipeIcons(player, open, inventory);
+                continue;
+            }
+            if (open.screen != Screen.EDITOR || session == null) {
+                continue;
+            }
+            if (!isCurrentMenu(inventory, open)) {
+                discardStaleMenu(player, open);
                 continue;
             }
             int tagCycle = session.advanceTagCycle();
-            Inventory inventory = player.getOpenInventory().getTopInventory();
             for (int i = 0; i < GRID_SLOTS.length; i++) {
                 IngredientSpec spec = session.ingredientSpec(i);
                 if (spec != null && spec.isTagOnly() && GuiUtil.isEmpty(session.ingredient(i))) {
@@ -729,9 +872,9 @@ public final class GuiManager implements Listener {
         }
     }
 
-    private void promptMainSearch(Player player) {
+    private void promptMainSearch(Player player, RecipeListFilter filter) {
         openMenus.remove(player.getUniqueId());
-        prompts.prompt(player, "Type a recipe search query. Type clear to clear search.", text -> openMain(player, 0, text.equalsIgnoreCase("cancel") || text.equalsIgnoreCase("clear") ? "" : text));
+        prompts.prompt(player, "Type a recipe search query. Type clear to clear search.", text -> openMain(player, 0, text.equalsIgnoreCase("cancel") || text.equalsIgnoreCase("clear") ? "" : text, filter));
     }
 
     private void promptVanillaSearch(Player player, int page) {
@@ -795,14 +938,18 @@ public final class GuiManager implements Listener {
             .toList();
     }
 
-    private List<ManagedRecipe> filteredManagedRecipes(Player player, String query) {
-        boolean admin = isAdmin(player);
+    private List<ManagedRecipe> filteredManagedRecipes(String query, RecipeListFilter filter) {
         String lower = query == null ? "" : query.toLowerCase(Locale.ROOT);
-        return registry.sortedRecipes().stream()
-            .filter(recipe -> admin || recipe.enabled())
+        return registry.recipes().stream()
+            .filter(recipe -> switch (filter) {
+                case ALL -> true;
+                case CUSTOM -> recipe.enabled();
+                case DISABLED -> !recipe.enabled();
+            })
             .filter(recipe -> lower.isBlank()
                 || recipe.displayLabel().toLowerCase(Locale.ROOT).contains(lower)
                 || ItemText.displayName(recipe.result()).toLowerCase(Locale.ROOT).contains(lower))
+            .sorted(Comparator.comparingInt(this::recipeTypeRank).thenComparing(ManagedRecipe::displayLabel))
             .toList();
     }
 
@@ -832,14 +979,90 @@ public final class GuiManager implements Listener {
         return null;
     }
 
-    private ItemStack recipeIcon(ManagedRecipe recipe, boolean admin) {
+    private ItemStack recipeIcon(ManagedRecipe recipe, boolean admin, boolean blinkBarrier) {
         List<String> lore = new ArrayList<>();
         lore.add(recipe.kind().displayName());
-        lore.add(recipe.enabled() ? "Enabled" : "Disabled");
+        lore.add(recipe.enabled() ? "Enabled" : "Disabled - not craftable");
         lore.add(recipe.isOverride() ? "Overrides " + recipe.sourceKey() : "Custom recipe");
+        addLimitLore(lore, "Per-player", recipe.playerLimit());
+        addLimitLore(lore, "Global", recipe.globalLimit());
         lore.add(admin ? "Left-click edit. Shift-right-click delete/revert." : "Left-click view.");
+        if (!recipe.enabled() && blinkBarrier) {
+            return GuiUtil.item(Material.BARRIER, GuiUtil.Tone.DANGER, ItemText.displayName(recipe.result()), lore);
+        }
         ItemStack result = recipe.result();
         return GuiUtil.namedClone(result, ItemText.displayName(result), recipe.enabled() ? GuiUtil.Tone.INFO : GuiUtil.Tone.MUTED, lore);
+    }
+
+    private void renderMainRecipeIcons(Player player, OpenMenu open, Inventory inventory) {
+        List<ManagedRecipe> recipes = filteredManagedRecipes(open.query, open.filter);
+        boolean admin = isAdmin(player);
+        for (int i = 0; i < MAIN_LIST_SLOTS.length; i++) {
+            int index = open.page * MAIN_LIST_SLOTS.length + i;
+            if (index >= recipes.size()) {
+                break;
+            }
+            ManagedRecipe recipe = recipes.get(index);
+            if (!recipe.enabled()) {
+                inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink));
+            }
+        }
+    }
+
+    private ItemStack filterItem(RecipeListFilter filter) {
+        return GuiUtil.item(Material.HOPPER, GuiUtil.Tone.WARNING, "Filter: " + filter.displayName(), "Click to cycle.", "All, Custom, Disabled");
+    }
+
+    private ItemStack limitItem(String name, RecipeLimit limit) {
+        return GuiUtil.item(Material.CLOCK, limit.enabled() ? GuiUtil.Tone.WARNING : GuiUtil.Tone.MUTED, name, limitDescription(limit), "Click to edit.");
+    }
+
+    private void addLimitLore(List<String> lore, String label, RecipeLimit limit) {
+        if (limit.enabled()) {
+            lore.add(label + " limit: " + limit.crafts() + " per " + formatDuration(limit.windowSeconds()));
+        }
+    }
+
+    private String limitDescription(RecipeLimit limit) {
+        return limit.enabled() ? limit.crafts() + " crafts per " + formatDuration(limit.windowSeconds()) : "No limit.";
+    }
+
+    private int recipeTypeRank(ManagedRecipe recipe) {
+        if (!recipe.enabled()) {
+            return 2;
+        }
+        return recipe.isOverride() ? 1 : 0;
+    }
+
+    private long parseDurationSeconds(String input) {
+        String value = input.trim().toLowerCase(Locale.ROOT);
+        long multiplier = 1L;
+        if (value.endsWith("s")) {
+            value = value.substring(0, value.length() - 1);
+        } else if (value.endsWith("m")) {
+            value = value.substring(0, value.length() - 1);
+            multiplier = 60L;
+        } else if (value.endsWith("h")) {
+            value = value.substring(0, value.length() - 1);
+            multiplier = 3600L;
+        } else if (value.endsWith("d")) {
+            value = value.substring(0, value.length() - 1);
+            multiplier = 86400L;
+        }
+        return Long.parseLong(value) * multiplier;
+    }
+
+    private String formatDuration(long seconds) {
+        if (seconds % 86400L == 0L && seconds >= 86400L) {
+            return (seconds / 86400L) + "d";
+        }
+        if (seconds % 3600L == 0L && seconds >= 3600L) {
+            return (seconds / 3600L) + "h";
+        }
+        if (seconds % 60L == 0L && seconds >= 60L) {
+            return (seconds / 60L) + "m";
+        }
+        return seconds + "s";
     }
 
     private void fill(Inventory inventory) {
@@ -850,7 +1073,7 @@ public final class GuiManager implements Listener {
     }
 
     private ItemStack workstationItem(WorkstationOption option) {
-        return GuiUtil.item(option.material(), GuiUtil.Tone.MUTED, option.name(), "Not editable yet.", option.description(), "Click for status.");
+        return GuiUtil.item(option.material(), GuiUtil.Tone.SUCCESS, option.name(), "Supported", option.description());
     }
 
     private WorkstationOption workstationOption(int slot) {
@@ -880,12 +1103,49 @@ public final class GuiManager implements Listener {
         return session != null && !session.readOnly() && (click.isLeftClick() || click.isRightClick());
     }
 
+    private boolean isCurrentMenu(Inventory inventory, OpenMenu open) {
+        return inventory == open.inventory();
+    }
+
+    private void discardStaleMenu(Player player, OpenMenu open) {
+        openMenus.remove(player.getUniqueId(), open);
+        if (open.screen() == Screen.EDITOR) {
+            releaseEditor(player);
+        }
+    }
+
     private boolean isAdmin(Player player) {
         return player.hasPermission("configurablecrafts.admin");
     }
 
-    private int ingredientIndex(int rawSlot) {
-        return indexOf(GRID_SLOTS, rawSlot);
+    private int ingredientIndex(ManagedRecipe recipe, int rawSlot) {
+        int index = indexOf(GRID_SLOTS, rawSlot);
+        return index >= 0 && isActiveIngredient(recipe, index) ? index : -1;
+    }
+
+    private boolean isActiveIngredient(ManagedRecipe recipe, int index) {
+        RecipeKind kind = recipe.kind().canonical();
+        if (kind == RecipeKind.SHAPED || kind == RecipeKind.SHAPELESS) {
+            return index >= 0 && index < 9;
+        }
+        if (kind == RecipeKind.BREWING) {
+            return index == 0 || index == 1;
+        }
+        if (kind == RecipeKind.SMITHING) {
+            return index >= 0 && index <= 2;
+        }
+        if (kind.isCooking() || kind == RecipeKind.STONECUTTING) {
+            return index == 0;
+        }
+        return false;
+    }
+
+    private void normalizeActiveIngredients(ManagedRecipe recipe) {
+        for (int i = 0; i < 9; i++) {
+            if (!isActiveIngredient(recipe, i)) {
+                recipe.setIngredient(i, null);
+            }
+        }
     }
 
     private int indexOf(int[] slots, int rawSlot) {
@@ -913,9 +1173,9 @@ public final class GuiManager implements Listener {
         CONFIRM_REMOVE
     }
 
-    private record OpenMenu(Screen screen, int page, String query, String recipeId, String vanillaKey) {
+    private record OpenMenu(Screen screen, int page, String query, String recipeId, RecipeListFilter filter, Inventory inventory) {
     }
 
-    private record WorkstationOption(int slot, Material material, String name, String description) {
+    private record WorkstationOption(int slot, Material material, RecipeKind kind, String name, String description) {
     }
 }

@@ -5,11 +5,14 @@ import java.util.Locale;
 public enum RecipeKind {
     SHAPED(true, "Shaped Crafting"),
     SHAPELESS(true, "Shapeless Crafting"),
-    BREWING(false, "Brewing"),
-    SMELTING(false, "Smelting"),
-    COOKING(false, "Cooking"),
-    BLASTING(false, "Blasting"),
-    SMITHING(false, "Smithing");
+    BREWING(true, "Brewing"),
+    SMELTING(true, "Smelting"),
+    SMOKING(true, "Smoking"),
+    BLASTING(true, "Blasting"),
+    CAMPFIRE(true, "Campfire Cooking"),
+    STONECUTTING(true, "Stonecutting"),
+    SMITHING(true, "Smithing"),
+    COOKING(true, "Smoking");
 
     private final boolean supported;
     private final String displayName;
@@ -23,6 +26,22 @@ public enum RecipeKind {
         return supported;
     }
 
+    public boolean isCraftingTable() {
+        return this == SHAPED || this == SHAPELESS;
+    }
+
+    public boolean isCooking() {
+        return this == SMELTING || this == SMOKING || this == COOKING || this == BLASTING || this == CAMPFIRE;
+    }
+
+    public boolean isBlockDriven() {
+        return isCooking() || this == BREWING;
+    }
+
+    public RecipeKind canonical() {
+        return this == COOKING ? SMOKING : this;
+    }
+
     public String displayName() {
         return displayName;
     }
@@ -32,7 +51,8 @@ public enum RecipeKind {
             return fallback;
         }
         try {
-            return RecipeKind.valueOf(value.trim().toUpperCase(Locale.ROOT));
+            RecipeKind parsed = RecipeKind.valueOf(value.trim().toUpperCase(Locale.ROOT));
+            return parsed.canonical();
         } catch (IllegalArgumentException ignored) {
             return fallback;
         }

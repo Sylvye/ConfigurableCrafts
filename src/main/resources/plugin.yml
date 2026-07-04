@@ -7,7 +7,7 @@ description: Highly configurable in-game crafting recipes.
 commands:
   configurablecrafts:
     description: Open the ConfigurableCrafts menu.
-    usage: /configurablecrafts
+    usage: /configurablecrafts [all|custom|disabled]
     aliases: [cc]
     permission: configurablecrafts.view
 permissions:
