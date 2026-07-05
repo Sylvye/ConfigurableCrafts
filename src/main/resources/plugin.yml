@@ -8,7 +8,7 @@ commands:
   configurablecrafts:
     description: Open the ConfigurableCrafts menu.
     usage: /configurablecrafts [all|custom|disabled]
-    aliases: [cc]
+    aliases: [cc, ccrafts]
     permission: configurablecrafts.view
 permissions:
   configurablecrafts.view:
