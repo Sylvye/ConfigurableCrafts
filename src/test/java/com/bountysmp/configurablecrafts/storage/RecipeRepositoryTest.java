@@ -24,6 +24,7 @@ class RecipeRepositoryTest extends BukkitTest {
         ManagedRecipe recipe = new ManagedRecipe("roundtrip", RecipeKind.SHAPELESS);
         recipe.setSourceKey("minecraft:golden_apple");
         recipe.setEnabled(false);
+        recipe.setAllowCrafters(true);
         recipe.setResult(new ItemStack(Material.GOLDEN_APPLE));
         recipe.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.APPLE)));
         recipe.conditions().dimensions().add("minecraft:overworld");
@@ -40,6 +41,7 @@ class RecipeRepositoryTest extends BukkitTest {
         assertEquals("minecraft:golden_apple", copy.sourceKey());
         assertEquals(RecipeKind.SHAPELESS, copy.kind());
         assertTrue(!copy.enabled());
+        assertTrue(copy.allowCrafters());
         assertEquals(Material.GOLDEN_APPLE, copy.result().getType());
         assertEquals(Material.APPLE, copy.ingredient(0).sample().getType());
         assertEquals(7, copy.conditions().minimumExperienceLevel());
@@ -47,6 +49,18 @@ class RecipeRepositoryTest extends BukkitTest {
         assertEquals(600, copy.playerLimit().windowSeconds());
         assertEquals(20, copy.globalLimit().crafts());
         assertEquals(3600, copy.globalLimit().windowSeconds());
+    }
+
+    @Test
+    void yamlLoadDefaultsAllowCraftersToFalse() {
+        RecipeRepository repository = new RecipeRepository(new File(tempDir, "recipes.yml"));
+        ManagedRecipe recipe = new ManagedRecipe("default_crafter", RecipeKind.SHAPED);
+        recipe.setResult(new ItemStack(Material.CHEST));
+        recipe.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.OAK_PLANKS)));
+
+        repository.save(List.of(recipe));
+
+        assertTrue(!repository.load().getFirst().allowCrafters());
     }
 
     @Test

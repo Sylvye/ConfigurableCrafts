@@ -56,6 +56,15 @@ public final class CraftLimitTracker {
     }
 
     public String tryConsume(ManagedRecipe recipe, UUID playerId, int crafts) {
+        String failure = check(recipe, playerId, crafts);
+        if (failure != null || crafts <= 0) {
+            return failure;
+        }
+        consume(recipe, playerId, crafts);
+        return null;
+    }
+
+    public String check(ManagedRecipe recipe, UUID playerId, int crafts) {
         if (crafts <= 0) {
             return null;
         }
@@ -73,6 +82,19 @@ public final class CraftLimitTracker {
         if (playerFailure != null) {
             return playerFailure;
         }
+        return null;
+    }
+
+    public void consume(ManagedRecipe recipe, UUID playerId, int crafts) {
+        if (crafts <= 0) {
+            return;
+        }
+        long now = clock.getAsLong();
+        RecipeLimit globalLimit = recipe.globalLimit();
+        RecipeLimit playerLimit = recipe.playerLimit();
+        UsageWindow globalWindow = window(globalUsage, recipe.id(), globalLimit, now);
+        UsageWindow playerWindow = playerId == null ? null : window(playerUsage.computeIfAbsent(recipe.id(), ignored -> new HashMap<>()), playerId, playerLimit, now);
+
         boolean changed = false;
         if (globalLimit.enabled()) {
             globalWindow.used += crafts;
@@ -85,7 +107,6 @@ public final class CraftLimitTracker {
         if (changed) {
             scheduleSave();
         }
-        return null;
     }
 
     private String failure(String label, RecipeLimit limit, UsageWindow window, int crafts, long now) {

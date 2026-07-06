@@ -89,6 +89,7 @@ public final class RecipeRepository {
         recipe.setCookTimeTicks(section.getInt("cook-time-ticks", ManagedRecipe.DEFAULT_COOK_TIME_TICKS));
         recipe.setBrewTimeTicks(section.getInt("brew-time-ticks", ManagedRecipe.DEFAULT_BREW_TIME_TICKS));
         recipe.setCopyDataComponents(section.getBoolean("copy-data-components", true));
+        recipe.setAllowCrafters(section.getBoolean("allow-crafters", false));
         return recipe;
     }
 
@@ -149,6 +150,7 @@ public final class RecipeRepository {
         section.set("type", recipe.kind().name());
         section.set("source-key", recipe.sourceKey());
         section.set("enabled", recipe.enabled());
+        section.set("allow-crafters", recipe.allowCrafters());
         section.set("result", recipe.result());
         ConfigurationSection ingredients = section.createSection("ingredients");
         for (int i = 0; i < 9; i++) {

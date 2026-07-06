@@ -2,7 +2,7 @@ name: ConfigurableCrafts
 version: 0.1.0
 main: com.bountysmp.configurablecrafts.ConfigurableCraftsPlugin
 api-version: '1.21.11'
-author: BountySMP
+author: Sylvye
 description: Highly configurable in-game crafting recipes.
 commands:
   configurablecrafts:

@@ -9,6 +9,7 @@ import com.bountysmp.configurablecrafts.model.RecipeConditions;
 import com.bountysmp.configurablecrafts.model.RecipeKind;
 import com.bountysmp.configurablecrafts.model.RecipeLimit;
 import com.bountysmp.configurablecrafts.model.RecipeListFilter;
+import com.bountysmp.configurablecrafts.model.WeatherMode;
 import com.bountysmp.configurablecrafts.util.ItemText;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -384,11 +385,7 @@ public final class GuiManager implements Listener {
             if (GuiUtil.isEmpty(slotItem)) {
                 return;
             }
-            if (owned) {
-                player.setItemOnCursor(slotItem);
-            } else {
-                player.sendMessage("Removed template item. It was not added to your inventory.");
-            }
+            player.setItemOnCursor(slotItem);
             setSessionSlot(session, ingredientIndex, resultSlot, null, false);
             renderEditor(player, session, event.getView().getTopInventory());
             return;
@@ -423,12 +420,7 @@ public final class GuiManager implements Listener {
         }
 
         if (event.getClick().isLeftClick()) {
-            if (owned) {
-                player.setItemOnCursor(slotItem);
-            } else {
-                player.setItemOnCursor(null);
-                player.sendMessage("Replaced template item. It was not added to your inventory.");
-            }
+            player.setItemOnCursor(slotItem);
             setSessionSlot(session, ingredientIndex, resultSlot, cursor, true);
             renderEditor(player, session, event.getView().getTopInventory());
         }
@@ -560,6 +552,15 @@ public final class GuiManager implements Listener {
             promptPositiveInt(player, session, "Type brew time in ticks.", session.recipe()::setBrewTimeTicks);
         } else if (slot == 43 && session.recipe().kind() == RecipeKind.SMITHING) {
             session.recipe().setCopyDataComponents(!session.recipe().copyDataComponents());
+        } else if (slot == 41 && session.recipe().kind().isCraftingTable()) {
+            if (!session.recipe().allowCrafters() && ManagedRecipeRegistry.hasCrafterBypassedRequirements(session.recipe())) {
+                player.sendMessage("Crafters can only be allowed when dimension, weather, XP, biome, and crafting limit requirements are not configured.");
+                return;
+            }
+            session.recipe().setAllowCrafters(!session.recipe().allowCrafters());
+            if (session.recipe().allowCrafters()) {
+                player.sendMessage(ManagedRecipeRegistry.CRAFTER_BYPASS_WARNING);
+            }
         }
     }
 
@@ -775,6 +776,10 @@ public final class GuiManager implements Listener {
     }
 
     private void renderRecipeControls(Inventory inventory, EditorSession session) {
+        if (session.readOnly()) {
+            renderRecipeDetails(inventory, session.recipe());
+            return;
+        }
         RecipeConditions conditions = session.recipe().conditions();
         inventory.setItem(14, GuiUtil.item(session.recipe().enabled() ? Material.LIME_DYE : Material.GRAY_DYE, session.recipe().enabled() ? GuiUtil.Tone.SUCCESS : GuiUtil.Tone.MUTED, "Recipe Enabled: " + session.recipe().enabled(), "Click to toggle."));
         inventory.setItem(15, GuiUtil.item(Material.ENDER_EYE, GuiUtil.Tone.WARNING, "Allowed Dimensions", conditions.dimensions().isEmpty() ? "Any dimension." : String.join(", ", conditions.dimensions())));
@@ -783,7 +788,35 @@ public final class GuiManager implements Listener {
         inventory.setItem(25, limitItem("Per-Player Limit", session.recipe().playerLimit()));
         inventory.setItem(32, GuiUtil.item(Material.EXPERIENCE_BOTTLE, GuiUtil.Tone.WARNING, "Minimum XP Level: " + conditions.minimumExperienceLevel(), "Click to edit."));
         inventory.setItem(34, limitItem("Global Limit", session.recipe().globalLimit()));
+        if (session.recipe().kind().isCraftingTable()) {
+            inventory.setItem(41, allowCraftersItem(session.recipe()));
+        }
         renderWorkstationControls(inventory, session.recipe());
+    }
+
+    private void renderRecipeDetails(Inventory inventory, ManagedRecipe recipe) {
+        RecipeConditions conditions = recipe.conditions();
+
+        inventory.setItem(14, GuiUtil.item(recipe.enabled() ? Material.LIME_DYE : Material.GRAY_DYE, recipe.enabled() ? GuiUtil.Tone.SUCCESS : GuiUtil.Tone.MUTED, "Recipe Enabled: " + recipe.enabled()));
+        inventory.setItem(15, conditions.dimensions().isEmpty()
+            ? noRequirementItem("No dimension requirement!")
+            : GuiUtil.item(Material.ENDER_EYE, GuiUtil.Tone.WARNING, "Allowed Dimensions", String.join(", ", conditions.dimensions())));
+        inventory.setItem(16, conditions.biomes().isEmpty()
+            ? noRequirementItem("No biome requirement!")
+            : GuiUtil.item(Material.GRASS_BLOCK, GuiUtil.Tone.WARNING, "Allowed Biomes", String.join(", ", conditions.biomes())));
+        inventory.setItem(23, conditions.weather() == WeatherMode.ANY
+            ? noRequirementItem("No weather requirement!")
+            : GuiUtil.item(Material.WATER_BUCKET, GuiUtil.Tone.WARNING, "Weather: " + conditions.weather().displayName()));
+        inventory.setItem(25, recipe.playerLimit().enabled()
+            ? limitDetailItem("Per-Player Limit", recipe.playerLimit())
+            : noRequirementItem("No per-player limit!"));
+        inventory.setItem(32, conditions.minimumExperienceLevel() == 0
+            ? noRequirementItem("No XP requirement!")
+            : GuiUtil.item(Material.EXPERIENCE_BOTTLE, GuiUtil.Tone.WARNING, "Minimum XP Level: " + conditions.minimumExperienceLevel()));
+        inventory.setItem(34, recipe.globalLimit().enabled()
+            ? limitDetailItem("Global Limit", recipe.globalLimit())
+            : noRequirementItem("No global limit!"));
+        renderWorkstationControls(inventory, recipe);
     }
 
     private void renderWorkstationControls(Inventory inventory, ManagedRecipe recipe) {
@@ -952,8 +985,15 @@ public final class GuiManager implements Listener {
             .filter(recipe -> lower.isBlank()
                 || recipe.displayLabel().toLowerCase(Locale.ROOT).contains(lower)
                 || ItemText.displayName(recipe.result()).toLowerCase(Locale.ROOT).contains(lower))
-            .sorted(Comparator.comparingInt(this::recipeTypeRank).thenComparing(ManagedRecipe::displayLabel))
+            .sorted(mainRecipeComparator())
             .toList();
+    }
+
+    static Comparator<ManagedRecipe> mainRecipeComparator() {
+        return Comparator.comparingInt(GuiManager::recipeKindRank)
+            .thenComparing(Comparator.comparingInt(GuiManager::nbtMatcherRank).reversed())
+            .thenComparingInt(GuiManager::recipeStateRank)
+            .thenComparing(ManagedRecipe::displayLabel);
     }
 
     private List<Recipe> filteredVanilla(String query) {
@@ -987,6 +1027,9 @@ public final class GuiManager implements Listener {
         lore.add(recipe.kind().displayName());
         lore.add(recipe.enabled() ? "Enabled" : "Disabled - not craftable");
         lore.add(recipe.isOverride() ? "Overrides " + recipe.sourceKey() : "Custom recipe");
+        if (recipe.allowCrafters()) {
+            lore.add("Crafters allowed");
+        }
         addLimitLore(lore, "Per-player", recipe.playerLimit());
         addLimitLore(lore, "Global", recipe.globalLimit());
         lore.add(admin ? "Left-click edit. Shift-right-click delete/revert." : "Left-click view.");
@@ -1020,6 +1063,23 @@ public final class GuiManager implements Listener {
         return GuiUtil.item(Material.CLOCK, limit.enabled() ? GuiUtil.Tone.WARNING : GuiUtil.Tone.MUTED, name, limitDescription(limit), "Click to edit.");
     }
 
+    private ItemStack limitDetailItem(String name, RecipeLimit limit) {
+        return GuiUtil.item(Material.CLOCK, GuiUtil.Tone.WARNING, name, limitDescription(limit));
+    }
+
+    private ItemStack noRequirementItem(String name) {
+        return GuiUtil.item(Material.LIME_STAINED_GLASS_PANE, GuiUtil.Tone.SUCCESS, name);
+    }
+
+    private ItemStack allowCraftersItem(ManagedRecipe recipe) {
+        List<String> lore = new ArrayList<>();
+        lore.add(recipe.allowCrafters() ? "Enabled" : "Disabled");
+        lore.add("Crafters bypass dimension, weather, XP, biome, and crafting limits.");
+        lore.add("Only enable when those requirements are not configured.");
+        lore.add("Click to toggle.");
+        return GuiUtil.item(Material.CRAFTER, recipe.allowCrafters() ? GuiUtil.Tone.SUCCESS : GuiUtil.Tone.MUTED, "Allow Crafters: " + recipe.allowCrafters(), lore);
+    }
+
     private void addLimitLore(List<String> lore, String label, RecipeLimit limit) {
         if (limit.enabled()) {
             lore.add(label + " limit: " + limit.crafts() + " per " + formatDuration(limit.windowSeconds()));
@@ -1030,11 +1090,36 @@ public final class GuiManager implements Listener {
         return limit.enabled() ? limit.crafts() + " crafts per " + formatDuration(limit.windowSeconds()) : "No limit.";
     }
 
-    private int recipeTypeRank(ManagedRecipe recipe) {
+    private static int recipeKindRank(ManagedRecipe recipe) {
+        return recipe.kind().canonical().ordinal();
+    }
+
+    private static int recipeStateRank(ManagedRecipe recipe) {
         if (!recipe.enabled()) {
             return 2;
         }
         return recipe.isOverride() ? 1 : 0;
+    }
+
+    private static int nbtMatcherRank(ManagedRecipe recipe) {
+        int rank = 0;
+        for (IngredientSpec spec : recipe.ingredients()) {
+            if (spec == null || spec.isEmpty()) {
+                continue;
+            }
+            for (MatcherType matcher : spec.matchers()) {
+                rank += nbtMatcherWeight(matcher);
+            }
+        }
+        return rank;
+    }
+
+    private static int nbtMatcherWeight(MatcherType matcher) {
+        return switch (matcher) {
+            case EXACT -> 100;
+            case ITEM_NAME, LORE_CONTAINS, ENCHANTMENTS -> 10;
+            case MATERIAL, TAG -> 0;
+        };
     }
 
     private long parseDurationSeconds(String input) {

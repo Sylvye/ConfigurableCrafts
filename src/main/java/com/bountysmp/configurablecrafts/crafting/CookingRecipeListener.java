@@ -3,6 +3,7 @@ package com.bountysmp.configurablecrafts.crafting;
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
 import org.bukkit.Keyed;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.FurnaceSmeltEvent;
 import org.bukkit.event.inventory.FurnaceStartSmeltEvent;
@@ -30,15 +31,27 @@ public final class CookingRecipeListener implements Listener {
         }
     }
 
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onSmelt(FurnaceSmeltEvent event) {
+        validateSmelt(event);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onSmeltCommit(FurnaceSmeltEvent event) {
+        ManagedRecipe recipe = managedRecipe(event.getRecipe());
+        if (recipe != null) {
+            limitTracker.consume(recipe, null, 1);
+        }
+    }
+
+    private void validateSmelt(FurnaceSmeltEvent event) {
         ManagedRecipe recipe = managedRecipe(event.getRecipe());
         if (recipe == null) {
             return;
         }
         String failure = ConditionValidator.failureReason(recipe, event.getBlock().getLocation());
         if (failure == null) {
-            failure = limitTracker.tryConsume(recipe, null, 1);
+            failure = limitTracker.check(recipe, null, 1);
         }
         if (failure != null) {
             event.setCancelled(true);

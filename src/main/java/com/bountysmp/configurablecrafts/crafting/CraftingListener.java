@@ -3,7 +3,9 @@ package com.bountysmp.configurablecrafts.crafting;
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
 import org.bukkit.Keyed;
 import org.bukkit.entity.Player;
+import org.bukkit.event.block.CrafterCraftEvent;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.inventory.PrepareItemCraftEvent;
@@ -36,8 +38,30 @@ public final class CraftingListener implements Listener {
         inventory.setResult(recipe.result());
     }
 
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onCraft(CraftItemEvent event) {
+        validateCraft(event);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onCraftCommit(CraftItemEvent event) {
+        ManagedRecipe recipe = managedRecipe(event.getRecipe());
+        if (recipe == null || !(event.getWhoClicked() instanceof Player player)) {
+            return;
+        }
+        limitTracker.consume(recipe, player.getUniqueId(), craftCount(event, recipe));
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onCrafterCraft(CrafterCraftEvent event) {
+        ManagedRecipe recipe = registry.byManagedKey(event.getRecipe().getKey());
+        if (recipe != null && !recipe.allowCrafters()) {
+            event.setCancelled(true);
+            event.setResult(null);
+        }
+    }
+
+    private void validateCraft(CraftItemEvent event) {
         ManagedRecipe recipe = managedRecipe(event.getRecipe());
         if (recipe == null) {
             return;
@@ -56,7 +80,7 @@ public final class CraftingListener implements Listener {
             return;
         }
         int craftCount = craftCount(event, recipe);
-        String limitFailure = limitTracker.tryConsume(recipe, player.getUniqueId(), craftCount);
+        String limitFailure = limitTracker.check(recipe, player.getUniqueId(), craftCount);
         if (limitFailure != null) {
             event.setCancelled(true);
             event.getInventory().setResult(null);

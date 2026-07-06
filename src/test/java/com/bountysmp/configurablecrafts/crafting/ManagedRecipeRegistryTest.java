@@ -55,6 +55,35 @@ class ManagedRecipeRegistryTest extends BukkitTest {
     }
 
     @Test
+    void validateForSaveRejectsCrafterAccessWithConditions() {
+        ManagedRecipeRegistry registry = registry();
+        ManagedRecipe recipe = validRecipe();
+        recipe.setAllowCrafters(true);
+        recipe.conditions().setMinimumExperienceLevel(1);
+
+        assertEquals("Crafters can only be allowed when dimension, weather, XP, biome, and crafting limit requirements are not configured.", registry.validateForSave(recipe));
+    }
+
+    @Test
+    void validateForSaveRejectsCrafterAccessWithLimits() {
+        ManagedRecipeRegistry registry = registry();
+        ManagedRecipe recipe = validRecipe();
+        recipe.setAllowCrafters(true);
+        recipe.globalLimit().set(1, 60);
+
+        assertEquals("Crafters can only be allowed when dimension, weather, XP, biome, and crafting limit requirements are not configured.", registry.validateForSave(recipe));
+    }
+
+    @Test
+    void warningsForSaveWarnsWhenCraftersAreAllowed() {
+        ManagedRecipeRegistry registry = registry();
+        ManagedRecipe recipe = validRecipe();
+        recipe.setAllowCrafters(true);
+
+        assertEquals(List.of(ManagedRecipeRegistry.CRAFTER_BYPASS_WARNING), registry.warningsForSave(recipe));
+    }
+
+    @Test
     void validateForSaveRejectsBrewingPerPlayerLimits() {
         ManagedRecipeRegistry registry = registry();
         ManagedRecipe recipe = validBrewingRecipe();

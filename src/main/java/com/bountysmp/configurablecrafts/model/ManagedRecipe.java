@@ -23,6 +23,7 @@ public final class ManagedRecipe {
     private int cookTimeTicks = DEFAULT_COOK_TIME_TICKS;
     private int brewTimeTicks = DEFAULT_BREW_TIME_TICKS;
     private boolean copyDataComponents = true;
+    private boolean allowCrafters;
 
     public ManagedRecipe(String id, RecipeKind kind) {
         this.id = sanitizeId(id == null || id.isBlank() ? "recipe_" + UUID.randomUUID() : id);
@@ -141,6 +142,14 @@ public final class ManagedRecipe {
         this.copyDataComponents = copyDataComponents;
     }
 
+    public boolean allowCrafters() {
+        return allowCrafters;
+    }
+
+    public void setAllowCrafters(boolean allowCrafters) {
+        this.allowCrafters = allowCrafters;
+    }
+
     public boolean isOverride() {
         return sourceKey != null;
     }
@@ -170,6 +179,7 @@ public final class ManagedRecipe {
         copy.cookTimeTicks = cookTimeTicks;
         copy.brewTimeTicks = brewTimeTicks;
         copy.copyDataComponents = copyDataComponents;
+        copy.allowCrafters = allowCrafters;
         return copy;
     }
 

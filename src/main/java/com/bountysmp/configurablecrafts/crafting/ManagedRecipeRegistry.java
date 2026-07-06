@@ -36,6 +36,7 @@ import org.bukkit.inventory.StonecuttingRecipe;
 import org.bukkit.plugin.Plugin;
 
 public final class ManagedRecipeRegistry {
+    public static final String CRAFTER_BYPASS_WARNING = "Warning: crafters bypass crafting conditions and limits. Only enable them on recipes without dimension, weather, XP, biome, per-player limit, or global limit requirements.";
     private static final char[] INGREDIENT_KEYS = "ABCDEFGHI".toCharArray();
     private static final Set<Material> VANILLA_BREWING_INGREDIENTS = Set.of(
         Material.NETHER_WART,
@@ -189,6 +190,10 @@ public final class ManagedRecipeRegistry {
         if (invalidConditions != null) {
             return invalidConditions;
         }
+        String invalidCrafterAccess = invalidCrafterAccess(recipe);
+        if (invalidCrafterAccess != null) {
+            return invalidCrafterAccess;
+        }
         String invalidIngredients = invalidIngredients(recipe);
         if (invalidIngredients != null) {
             return invalidIngredients;
@@ -205,13 +210,14 @@ public final class ManagedRecipeRegistry {
     }
 
     public List<String> warningsForSave(ManagedRecipe recipe) {
-        if (recipe.kind().canonical() != RecipeKind.BREWING) {
-            return List.of();
+        List<String> warnings = new ArrayList<>();
+        if (recipe.allowCrafters()) {
+            warnings.add(CRAFTER_BYPASS_WARNING);
         }
-        if (likelyShadowsVanillaBrewing(recipe)) {
-            return List.of("Warning: this brewing recipe may override a vanilla brewing mix.");
+        if (recipe.kind().canonical() == RecipeKind.BREWING && likelyShadowsVanillaBrewing(recipe)) {
+            warnings.add("Warning: this brewing recipe may override a vanilla brewing mix.");
         }
-        return List.of();
+        return warnings;
     }
 
     public void upsert(ManagedRecipe recipe) {
@@ -425,6 +431,28 @@ public final class ManagedRecipeRegistry {
             return "Unknown biome(s): " + String.join(", ", invalidBiomes);
         }
         return null;
+    }
+
+    private String invalidCrafterAccess(ManagedRecipe recipe) {
+        if (!recipe.allowCrafters()) {
+            return null;
+        }
+        if (!recipe.kind().isCraftingTable()) {
+            return "Only shaped and shapeless recipes can allow crafters.";
+        }
+        if (hasCrafterBypassedRequirements(recipe)) {
+            return "Crafters can only be allowed when dimension, weather, XP, biome, and crafting limit requirements are not configured.";
+        }
+        return null;
+    }
+
+    public static boolean hasCrafterBypassedRequirements(ManagedRecipe recipe) {
+        return !recipe.conditions().dimensions().isEmpty()
+            || !recipe.conditions().biomes().isEmpty()
+            || recipe.conditions().weather() != WeatherMode.ANY
+            || recipe.conditions().minimumExperienceLevel() > 0
+            || recipe.playerLimit().enabled()
+            || recipe.globalLimit().enabled();
     }
 
     private String brewingConflictDescription(ManagedRecipe recipe) {

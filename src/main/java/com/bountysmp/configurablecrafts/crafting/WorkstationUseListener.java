@@ -5,6 +5,7 @@ import io.papermc.paper.event.player.PlayerStonecutterRecipeSelectEvent;
 import org.bukkit.Keyed;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
@@ -38,8 +39,21 @@ public final class WorkstationUseListener implements Listener {
         }
     }
 
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onSmith(SmithItemEvent event) {
+        validateSmith(event);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onSmithCommit(SmithItemEvent event) {
+        ManagedRecipe recipe = managedRecipe(event.getInventory().getRecipe());
+        if (recipe == null || !(event.getWhoClicked() instanceof Player player)) {
+            return;
+        }
+        limitTracker.consume(recipe, player.getUniqueId(), 1);
+    }
+
+    private void validateSmith(SmithItemEvent event) {
         ManagedRecipe recipe = managedRecipe(event.getInventory().getRecipe());
         if (recipe == null) {
             return;
@@ -51,7 +65,7 @@ public final class WorkstationUseListener implements Listener {
         }
         String failure = ConditionValidator.failureReason(recipe, player);
         if (failure == null) {
-            failure = limitTracker.tryConsume(recipe, player.getUniqueId(), 1);
+            failure = limitTracker.check(recipe, player.getUniqueId(), 1);
         }
         if (failure != null) {
             event.setCancelled(true);
@@ -73,8 +87,28 @@ public final class WorkstationUseListener implements Listener {
         }
     }
 
-    @EventHandler(ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onStonecutterTake(InventoryClickEvent event) {
+        validateStonecutterTake(event);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onStonecutterTakeCommit(InventoryClickEvent event) {
+        if (event.getView().getType() != InventoryType.STONECUTTER || event.getRawSlot() != 1 || !takesResult(event)) {
+            return;
+        }
+        if (!(event.getWhoClicked() instanceof Player player) || !(event.getView() instanceof StonecutterView view)) {
+            return;
+        }
+        ManagedRecipe recipe = managedRecipe(selectedStonecutterRecipe(view));
+        if (recipe == null) {
+            return;
+        }
+        int crafts = event.getClick().isShiftClick() ? maxStonecuttingCrafts(view.getTopInventory(), event.getCurrentItem()) : 1;
+        limitTracker.consume(recipe, player.getUniqueId(), crafts);
+    }
+
+    private void validateStonecutterTake(InventoryClickEvent event) {
         if (event.getView().getType() != InventoryType.STONECUTTER || event.getRawSlot() != 1) {
             return;
         }
@@ -89,7 +123,7 @@ public final class WorkstationUseListener implements Listener {
         String failure = ConditionValidator.failureReason(recipe, player);
         if (failure == null && takesResult(event)) {
             int crafts = event.getClick().isShiftClick() ? maxStonecuttingCrafts(view.getTopInventory(), event.getCurrentItem()) : 1;
-            failure = limitTracker.tryConsume(recipe, player.getUniqueId(), crafts);
+            failure = limitTracker.check(recipe, player.getUniqueId(), crafts);
         }
         if (failure != null) {
             event.setCancelled(true);

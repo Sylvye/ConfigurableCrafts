@@ -44,6 +44,17 @@ class CraftLimitTrackerTest extends BukkitTest {
     }
 
     @Test
+    void checkDoesNotConsumeLimit() {
+        CraftLimitTracker tracker = tracker(new AtomicLong(1_000L));
+        ManagedRecipe recipe = recipe();
+        recipe.globalLimit().set(1, 60);
+
+        assertNull(tracker.check(recipe, UUID.randomUUID(), 1));
+        assertNull(tracker.tryConsume(recipe, UUID.randomUUID(), 1));
+        assertNotNull(tracker.tryConsume(recipe, UUID.randomUUID(), 1));
+    }
+
+    @Test
     void usageWindowsReloadFromDisk() {
         AtomicLong now = new AtomicLong(1_000L);
         File file = new File(tempDir, "limit-usage.yml");
