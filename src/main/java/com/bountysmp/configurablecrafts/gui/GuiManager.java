@@ -19,6 +19,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -1033,11 +1034,19 @@ public final class GuiManager implements Listener {
         addLimitLore(lore, "Per-player", recipe.playerLimit());
         addLimitLore(lore, "Global", recipe.globalLimit());
         lore.add(admin ? "Left-click edit. Shift-right-click delete/revert." : "Left-click view.");
+        Component resultName = exactResultName(recipe.result());
         if (!recipe.enabled() && blinkBarrier) {
-            return GuiUtil.item(Material.BARRIER, GuiUtil.Tone.DANGER, ItemText.displayName(recipe.result()), lore);
+            return GuiUtil.namedClone(new ItemStack(Material.BARRIER), resultName, lore);
         }
         ItemStack result = recipe.result();
-        return GuiUtil.namedClone(result, ItemText.displayName(result), recipe.enabled() ? GuiUtil.Tone.INFO : GuiUtil.Tone.MUTED, lore);
+        return GuiUtil.namedClone(result, resultName, lore);
+    }
+
+    private Component exactResultName(ItemStack result) {
+        if (GuiUtil.isEmpty(result)) {
+            return Component.text("Empty");
+        }
+        return result.effectiveName();
     }
 
     private void renderMainRecipeIcons(Player player, OpenMenu open, Inventory inventory) {

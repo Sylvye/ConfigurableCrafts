@@ -66,14 +66,34 @@ final class GuiUtil {
         ItemStack itemStack = source == null || source.getType().isAir() ? item(Material.BARRIER, fallbackName) : source.clone();
         ItemMeta meta = itemStack.getItemMeta();
         meta.displayName(text(fallbackName == null ? ItemText.displayName(source) : fallbackName, tone));
+        applyLore(meta, lore);
+        itemStack.setItemMeta(meta);
+        return itemStack;
+    }
+
+    static ItemStack namedClone(ItemStack source, Component displayName, List<String> lore) {
+        ItemStack itemStack = source == null || source.getType().isAir() ? new ItemStack(Material.BARRIER) : source.clone();
+        ItemMeta meta = itemStack.getItemMeta();
+        meta.displayName(nonItalicByDefault(displayName == null ? text(ItemText.displayName(source), Tone.INFO) : displayName));
+        applyLore(meta, lore);
+        itemStack.setItemMeta(meta);
+        return itemStack;
+    }
+
+    private static Component nonItalicByDefault(Component displayName) {
+        if (displayName.decoration(TextDecoration.ITALIC) == TextDecoration.State.TRUE) {
+            return displayName;
+        }
+        return displayName.decoration(TextDecoration.ITALIC, false);
+    }
+
+    private static void applyLore(ItemMeta meta, List<String> lore) {
         List<Component> lines = new ArrayList<>(lore.size());
         for (String line : lore) {
             lines.add(lore(line));
         }
         meta.lore(lines);
         meta.addItemFlags(ItemFlag.values());
-        itemStack.setItemMeta(meta);
-        return itemStack;
     }
 
     static ItemStack displayClone(ItemStack source, String role) {
