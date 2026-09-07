@@ -82,7 +82,8 @@ public final class RecipePattern {
 
     private static boolean matchesShaped(ManagedRecipe recipe, ItemStack[] matrix) {
         Bounds recipeBounds = bounds(recipe.ingredients());
-        Bounds inputBounds = bounds(matrix);
+        int matrixWidth = matrixWidth(matrix);
+        Bounds inputBounds = bounds(matrix, matrixWidth);
         if (recipeBounds.empty() || inputBounds.empty()) {
             return false;
         }
@@ -92,7 +93,7 @@ public final class RecipePattern {
         for (int rowOffset = 0; rowOffset < recipeBounds.height(); rowOffset++) {
             for (int colOffset = 0; colOffset < recipeBounds.width(); colOffset++) {
                 IngredientSpec spec = recipe.ingredient((recipeBounds.minRow + rowOffset) * 3 + recipeBounds.minCol + colOffset);
-                ItemStack input = matrix[(inputBounds.minRow + rowOffset) * 3 + inputBounds.minCol + colOffset];
+                ItemStack input = matrix[(inputBounds.minRow + rowOffset) * matrixWidth + inputBounds.minCol + colOffset];
                 if (!IngredientMatcher.matches(spec, input)) {
                     return false;
                 }
@@ -149,15 +150,19 @@ public final class RecipePattern {
         return bounds;
     }
 
-    private static Bounds bounds(ItemStack[] matrix) {
+    private static Bounds bounds(ItemStack[] matrix, int matrixWidth) {
         Bounds bounds = new Bounds();
-        for (int i = 0; i < Math.min(9, matrix.length); i++) {
+        for (int i = 0; i < matrix.length; i++) {
             ItemStack itemStack = matrix[i];
             if (itemStack != null && !itemStack.getType().isAir()) {
-                bounds.include(i / 3, i % 3);
+                bounds.include(i / matrixWidth, i % matrixWidth);
             }
         }
         return bounds;
+    }
+
+    private static int matrixWidth(ItemStack[] matrix) {
+        return matrix.length == 4 ? 2 : 3;
     }
 
     private static final class Bounds {

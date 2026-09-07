@@ -29,6 +29,42 @@ class RecipePatternTest extends BukkitTest {
     }
 
     @Test
+    void topLeftTwoByTwoShapedRecipeMatchesSurvivalInventory() {
+        ManagedRecipe recipe = new ManagedRecipe("test", RecipeKind.SHAPED);
+        recipe.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.DIAMOND)));
+        recipe.setIngredient(1, IngredientSpec.fromSample(new ItemStack(Material.EMERALD)));
+        recipe.setIngredient(3, IngredientSpec.fromSample(new ItemStack(Material.GOLD_INGOT)));
+        recipe.setIngredient(4, IngredientSpec.fromSample(new ItemStack(Material.IRON_INGOT)));
+
+        ItemStack[] matrix = {
+            new ItemStack(Material.DIAMOND),
+            new ItemStack(Material.EMERALD),
+            new ItemStack(Material.GOLD_INGOT),
+            new ItemStack(Material.IRON_INGOT)
+        };
+
+        assertTrue(RecipePattern.matches(recipe, matrix));
+    }
+
+    @Test
+    void offsetTwoByTwoShapedRecipeMatchesSurvivalInventory() {
+        ManagedRecipe recipe = new ManagedRecipe("test", RecipeKind.SHAPED);
+        recipe.setIngredient(4, IngredientSpec.fromSample(new ItemStack(Material.DIAMOND)));
+        recipe.setIngredient(5, IngredientSpec.fromSample(new ItemStack(Material.EMERALD)));
+        recipe.setIngredient(7, IngredientSpec.fromSample(new ItemStack(Material.GOLD_INGOT)));
+        recipe.setIngredient(8, IngredientSpec.fromSample(new ItemStack(Material.IRON_INGOT)));
+
+        ItemStack[] matrix = {
+            new ItemStack(Material.DIAMOND),
+            new ItemStack(Material.EMERALD),
+            new ItemStack(Material.GOLD_INGOT),
+            new ItemStack(Material.IRON_INGOT)
+        };
+
+        assertTrue(RecipePattern.matches(recipe, matrix));
+    }
+
+    @Test
     void shapedRecipesRejectExtraItems() {
         ManagedRecipe recipe = new ManagedRecipe("test", RecipeKind.SHAPED);
         recipe.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.DIAMOND)));
