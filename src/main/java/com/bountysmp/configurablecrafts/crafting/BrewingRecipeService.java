@@ -9,13 +9,18 @@ import net.kyori.adventure.text.Component;
 import org.bukkit.Material;
 import org.bukkit.block.BrewingStand;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BrewingStartEvent;
 import org.bukkit.event.inventory.BrewEvent;
+import org.bukkit.event.inventory.InventoryAction;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.inventory.BrewerInventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.PotionMeta;
+import org.bukkit.entity.Player;
 
 public final class BrewingRecipeService implements Listener {
     private static final int[] BOTTLE_SLOTS = {0, 1, 2};
@@ -73,25 +78,136 @@ public final class BrewingRecipeService implements Listener {
         if (!(event.getDestination() instanceof BrewerInventory inventory)) {
             return;
         }
-        if (exclusivelyBlockedRoute(inventory, event.getItem()) != null) {
+        BrewingContents projected = BrewingContents.from(inventory);
+        if (!projected.insertAutomatically(event.getItem())) {
+            return;
+        }
+        if (exclusivelyBlockedRoute(projected) != null) {
             event.setCancelled(true);
         }
     }
 
-    private BlockedRoute exclusivelyBlockedRoute(BrewerInventory inventory, ItemStack ingredient) {
-        BlockedRoute found = null;
-        boolean replacementCanBrew = false;
-        for (int slot : BOTTLE_SLOTS) {
-            ItemStack input = inventory.getItem(slot);
-            if (matchingVanillaReplacement(input, ingredient) != null) {
-                replacementCanBrew = true;
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onInventoryClick(InventoryClickEvent event) {
+        if (!(event.getView().getTopInventory() instanceof BrewerInventory inventory)) {
+            return;
+        }
+        BrewingContents projected = BrewingContents.from(inventory);
+        if (!projectClick(event, projected)) {
+            return;
+        }
+        BlockedRoute blocked = exclusivelyBlockedRoute(projected);
+        if (blocked == null) {
+            return;
+        }
+        event.setCancelled(true);
+        if (event.getWhoClicked() instanceof Player player) {
+            player.sendActionBar(Component.text(blockedMessage(blocked)));
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onInventoryDrag(InventoryDragEvent event) {
+        if (!(event.getView().getTopInventory() instanceof BrewerInventory inventory)) {
+            return;
+        }
+        BrewingContents projected = BrewingContents.from(inventory);
+        boolean changed = false;
+        for (var entry : event.getNewItems().entrySet()) {
+            int rawSlot = entry.getKey();
+            if (rawSlot >= 0 && rawSlot <= 3) {
+                projected.set(rawSlot, entry.getValue());
+                changed = true;
             }
-            BlockedRoute blocked = blockedOriginal(input, ingredient);
+        }
+        if (!changed) {
+            return;
+        }
+        BlockedRoute blocked = exclusivelyBlockedRoute(projected);
+        if (blocked != null) {
+            event.setCancelled(true);
+            if (event.getWhoClicked() instanceof Player player) {
+                player.sendActionBar(Component.text(blockedMessage(blocked)));
+            }
+        }
+    }
+
+    private boolean projectClick(InventoryClickEvent event, BrewingContents projected) {
+        int topSize = event.getView().getTopInventory().getSize();
+        boolean topClick = event.getRawSlot() >= 0 && event.getRawSlot() < topSize;
+        if (event.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY) {
+            return !topClick && projected.insertAutomatically(event.getCurrentItem());
+        }
+        if (!topClick || event.getRawSlot() > 3) {
+            return false;
+        }
+        ItemStack incoming = switch (event.getAction()) {
+            case PLACE_ALL, PLACE_ONE, PLACE_SOME, SWAP_WITH_CURSOR -> event.getCursor();
+            case HOTBAR_SWAP, HOTBAR_MOVE_AND_READD -> hotbarItem(event);
+            default -> null;
+        };
+        if (incoming == null || incoming.getType().isAir()) {
+            return false;
+        }
+        projected.set(event.getRawSlot(), incoming);
+        return true;
+    }
+
+    private ItemStack hotbarItem(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return null;
+        }
+        int button = event.getHotbarButton();
+        return button >= 0 ? player.getInventory().getItem(button) : player.getInventory().getItemInOffHand();
+    }
+
+    private BlockedRoute exclusivelyBlockedRoute(BrewerInventory inventory, ItemStack ingredient) {
+        return exclusivelyBlockedRoute(BrewingContents.from(inventory).withIngredient(ingredient));
+    }
+
+    private BlockedRoute exclusivelyBlockedRoute(BrewingContents contents) {
+        BlockedRoute found = null;
+        boolean anythingCanBrew = false;
+        for (int slot : BOTTLE_SLOTS) {
+            ItemStack input = contents.bottles[slot];
+            if (canBrew(input, contents.ingredient)) {
+                anythingCanBrew = true;
+            }
+            BlockedRoute blocked = blockedOriginal(input, contents.ingredient);
             if (blocked != null) {
                 found = blocked;
             }
         }
-        return found != null && !replacementCanBrew ? found : null;
+        return found != null && !anythingCanBrew ? found : null;
+    }
+
+    private boolean canBrew(ItemStack input, ItemStack ingredient) {
+        if (input == null || ingredient == null) {
+            return false;
+        }
+        for (ManagedRecipe recipe : registry.recipes()) {
+            if (!isUsableBrewingRecipe(recipe) || !IngredientMatcher.matches(recipe.ingredient(1), ingredient)) {
+                continue;
+            }
+            boolean inputMatches = VanillaBrewingCatalog.isOverride(recipe)
+                ? matchesConfiguredInput(recipe, input)
+                : IngredientMatcher.matches(recipe.ingredient(0), input);
+            if (inputMatches) {
+                return true;
+            }
+        }
+        for (VanillaBrewingCatalog.Entry entry : registry.vanillaBrewingRecipes()) {
+            if (!matchesOriginal(entry, input, ingredient)) {
+                continue;
+            }
+            ManagedRecipe override = registry.vanillaBrewingOverride(entry.sourceKey());
+            if (override == null) {
+                return true;
+            }
+            return override.enabled() && matchesConfiguredInput(override, input)
+                && IngredientMatcher.matches(override.ingredient(1), ingredient);
+        }
+        return false;
     }
 
     private ManagedRecipe matchingVanillaReplacement(ItemStack input, ItemStack ingredient) {
@@ -161,12 +277,72 @@ public final class BrewingRecipeService implements Listener {
         stand.setFuelLevel(Math.min(20, stand.getFuelLevel() + 1));
         stand.update(true);
         stand.getWorld().dropItemNaturally(stand.getLocation().add(0.5, 1.0, 0.5), returned);
-        String message = blocked.override().enabled()
-            ? blocked.entry().displayName() + " changed: use "
-                + com.bountysmp.configurablecrafts.util.ItemText.displayName(blocked.override().ingredient(1).sample()) + "."
-            : blocked.entry().displayName() + " brewing is disabled.";
+        String message = blockedMessage(blocked);
         for (var viewer : inventory.getViewers()) {
             viewer.sendActionBar(Component.text(message));
+        }
+    }
+
+    private String blockedMessage(BlockedRoute blocked) {
+        return blocked.override().enabled()
+            ? blocked.entry().displayName() + " changed — use "
+                + com.bountysmp.configurablecrafts.util.ItemText.displayName(blocked.override().ingredient(1).sample()) + "."
+            : blocked.entry().displayName() + " brewing is disabled.";
+    }
+
+    private static final class BrewingContents {
+        private final ItemStack[] bottles = new ItemStack[3];
+        private ItemStack ingredient;
+
+        static BrewingContents from(BrewerInventory inventory) {
+            BrewingContents contents = new BrewingContents();
+            for (int slot : BOTTLE_SLOTS) {
+                contents.bottles[slot] = cloneOrNull(inventory.getItem(slot));
+            }
+            contents.ingredient = cloneOrNull(inventory.getItem(3));
+            return contents;
+        }
+
+        BrewingContents withIngredient(ItemStack item) {
+            ingredient = cloneOrNull(item);
+            return this;
+        }
+
+        void set(int slot, ItemStack item) {
+            if (slot >= 0 && slot < bottles.length) {
+                bottles[slot] = cloneOrNull(item);
+            } else if (slot == 3) {
+                ingredient = cloneOrNull(item);
+            }
+        }
+
+        boolean insertAutomatically(ItemStack item) {
+            if (item == null || item.getType().isAir()) {
+                return false;
+            }
+            if (isPotion(item)) {
+                for (int slot = 0; slot < bottles.length; slot++) {
+                    if (bottles[slot] == null) {
+                        bottles[slot] = item.clone();
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (ingredient == null) {
+                ingredient = item.clone();
+                return true;
+            }
+            return false;
+        }
+
+        private static boolean isPotion(ItemStack item) {
+            return item.getType() == Material.POTION || item.getType() == Material.SPLASH_POTION
+                || item.getType() == Material.LINGERING_POTION;
+        }
+
+        private static ItemStack cloneOrNull(ItemStack item) {
+            return item == null || item.getType().isAir() ? null : item.clone();
         }
     }
 
