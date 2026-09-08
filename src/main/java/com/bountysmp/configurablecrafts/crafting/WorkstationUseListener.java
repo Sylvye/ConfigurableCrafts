@@ -7,7 +7,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryType;
@@ -16,6 +15,7 @@ import org.bukkit.event.inventory.SmithItemEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.StonecutterInventory;
+import org.bukkit.inventory.SmithingInventory;
 import org.bukkit.inventory.view.StonecutterView;
 
 public final class WorkstationUseListener implements Listener {
@@ -34,7 +34,8 @@ public final class WorkstationUseListener implements Listener {
             return;
         }
         Player player = event.getView().getPlayer() instanceof Player p ? p : null;
-        if (player == null || ConditionValidator.failureReason(recipe, player) != null) {
+        if (player == null || ConditionValidator.failureReason(recipe, player) != null
+            || !matchesSmithingInputs(recipe, event.getInventory())) {
             event.setResult(null);
         }
     }
@@ -47,7 +48,7 @@ public final class WorkstationUseListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onSmithCommit(SmithItemEvent event) {
         ManagedRecipe recipe = managedRecipe(event.getInventory().getRecipe());
-        if (recipe == null || !(event.getWhoClicked() instanceof Player player)) {
+        if (recipe == null || !(event.getWhoClicked() instanceof Player player) || !takesResult(event)) {
             return;
         }
         limitTracker.consume(recipe, player.getUniqueId(), 1);
@@ -63,7 +64,14 @@ public final class WorkstationUseListener implements Listener {
             event.setCancelled(true);
             return;
         }
+        if (!takesResult(event)) {
+            event.setCancelled(true);
+            return;
+        }
         String failure = ConditionValidator.failureReason(recipe, player);
+        if (failure == null && !matchesSmithingInputs(recipe, event.getInventory())) {
+            failure = "This recipe does not match the configured ingredients.";
+        }
         if (failure == null) {
             failure = limitTracker.check(recipe, player.getUniqueId(), 1);
         }
@@ -81,6 +89,10 @@ public final class WorkstationUseListener implements Listener {
             return;
         }
         String failure = ConditionValidator.failureReason(recipe, event.getPlayer());
+        if (failure == null && !IngredientMatcher.matches(recipe.ingredient(0),
+            event.getStonecutterInventory().getInputItem())) {
+            failure = "This recipe does not match the configured ingredient.";
+        }
         if (failure != null) {
             event.setCancelled(true);
             event.getPlayer().sendMessage(failure);
@@ -104,7 +116,8 @@ public final class WorkstationUseListener implements Listener {
         if (recipe == null) {
             return;
         }
-        int crafts = event.getClick().isShiftClick() ? maxStonecuttingCrafts(view.getTopInventory(), event.getCurrentItem()) : 1;
+        int crafts = event.getClick().isShiftClick()
+            ? maxStonecuttingCrafts(view.getTopInventory(), player, event.getCurrentItem()) : 1;
         limitTracker.consume(recipe, player.getUniqueId(), crafts);
     }
 
@@ -121,8 +134,12 @@ public final class WorkstationUseListener implements Listener {
             return;
         }
         String failure = ConditionValidator.failureReason(recipe, player);
+        if (failure == null && !IngredientMatcher.matches(recipe.ingredient(0), view.getTopInventory().getInputItem())) {
+            failure = "This recipe does not match the configured ingredient.";
+        }
         if (failure == null && takesResult(event)) {
-            int crafts = event.getClick().isShiftClick() ? maxStonecuttingCrafts(view.getTopInventory(), event.getCurrentItem()) : 1;
+            int crafts = event.getClick().isShiftClick()
+                ? maxStonecuttingCrafts(view.getTopInventory(), player, event.getCurrentItem()) : 1;
             failure = limitTracker.check(recipe, player.getUniqueId(), crafts);
         }
         if (failure != null) {
@@ -137,19 +154,35 @@ public final class WorkstationUseListener implements Listener {
     }
 
     private boolean takesResult(InventoryClickEvent event) {
-        return event.getClick().isLeftClick()
-            || event.getClick().isRightClick()
-            || event.getClick() == ClickType.SHIFT_LEFT
-            || event.getClick() == ClickType.SHIFT_RIGHT
-            || event.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY;
+        return switch (event.getAction()) {
+            case PICKUP_ALL, PICKUP_SOME, PICKUP_HALF, PICKUP_ONE,
+                 MOVE_TO_OTHER_INVENTORY, HOTBAR_MOVE_AND_READD, HOTBAR_SWAP,
+                 DROP_ALL_SLOT, DROP_ONE_SLOT -> true;
+            default -> false;
+        };
     }
 
-    private int maxStonecuttingCrafts(StonecutterInventory inventory, ItemStack result) {
+    private int maxStonecuttingCrafts(StonecutterInventory inventory, Player player, ItemStack result) {
         ItemStack input = inventory.getInputItem();
         if (input == null || input.getType().isAir() || result == null || result.getType().isAir()) {
             return 0;
         }
-        return input.getAmount();
+        int capacity = 0;
+        int maxStack = Math.min(result.getMaxStackSize(), player.getInventory().getMaxStackSize());
+        for (ItemStack item : player.getInventory().getStorageContents()) {
+            if (item == null || item.getType().isAir()) {
+                capacity += maxStack;
+            } else if (item.isSimilar(result)) {
+                capacity += Math.max(0, maxStack - item.getAmount());
+            }
+        }
+        return Math.min(input.getAmount(), capacity / result.getAmount());
+    }
+
+    private boolean matchesSmithingInputs(ManagedRecipe recipe, SmithingInventory inventory) {
+        return IngredientMatcher.matches(recipe.ingredient(0), inventory.getInputTemplate())
+            && IngredientMatcher.matches(recipe.ingredient(1), inventory.getInputEquipment())
+            && IngredientMatcher.matches(recipe.ingredient(2), inventory.getInputMineral());
     }
 
     private ManagedRecipe managedRecipe(Recipe recipe) {

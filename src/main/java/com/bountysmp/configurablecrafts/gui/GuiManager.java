@@ -144,6 +144,14 @@ public final class GuiManager implements Listener {
             discardStaleMenu(player, open);
             return;
         }
+        if (requiresAdmin(player, open) && !isAdmin(player)) {
+            event.setCancelled(true);
+            releaseEditor(player);
+            openMenus.remove(player.getUniqueId());
+            player.closeInventory();
+            player.sendMessage("You no longer have permission to modify recipes.");
+            return;
+        }
         if (event.getClick() == ClickType.DOUBLE_CLICK || event.getAction() == InventoryAction.COLLECT_TO_CURSOR) {
             event.setCancelled(true);
             return;
@@ -203,12 +211,14 @@ public final class GuiManager implements Listener {
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
+        prompts.cancel(event.getPlayer());
         releaseEditor(event.getPlayer());
         openMenus.remove(event.getPlayer().getUniqueId());
     }
 
     @EventHandler
     public void onKick(PlayerKickEvent event) {
+        prompts.cancel(event.getPlayer());
         releaseEditor(event.getPlayer());
         openMenus.remove(event.getPlayer().getUniqueId());
     }
@@ -671,6 +681,12 @@ public final class GuiManager implements Listener {
     }
 
     private void saveEditor(Player player, EditorSession session) {
+        if (!isAdmin(player)) {
+            player.sendMessage("You no longer have permission to modify recipes.");
+            releaseEditor(player);
+            player.closeInventory();
+            return;
+        }
         session.applyItemsToRecipe();
         normalizeActiveIngredients(session.recipe());
         String error = registry.validateForSave(session.recipe());
@@ -887,7 +903,7 @@ public final class GuiManager implements Listener {
             ItemStack remainder = spec.remainder();
             inventory.setItem(REMAINDER_SLOT, GuiUtil.isEmpty(remainder)
                 ? GuiUtil.item(Material.BUCKET, GuiUtil.Tone.NEUTRAL, "Remainder Item", "Place the item returned after crafting here.", "Example: an empty bucket.")
-                : GuiUtil.namedClone(remainder, "Remainder: " + ItemText.displayName(remainder), GuiUtil.Tone.INFO, List.of("Returned after this ingredient is consumed.", "Click with an empty cursor to clear.")));
+                : GuiUtil.namedClone(remainder, "Remainder: " + ItemText.displayName(remainder), GuiUtil.Tone.INFO, List.of("Left in the crafting grid when possible.", "Click with an empty cursor to clear.")));
         }
         inventory.setItem(32, matcherItem(spec, MatcherType.TAG, spec.tagKey().isBlank() ? "No tag set." : spec.tagKey()));
         inventory.setItem(33, matcherItem(spec, MatcherType.ENCHANTMENTS, spec.enchantments().isEmpty() ? "No enchantments captured." : spec.enchantments().toString()));
@@ -970,6 +986,12 @@ public final class GuiManager implements Listener {
         session.setSuspended(true);
         openMenus.remove(player.getUniqueId());
         prompts.prompt(player, message, text -> {
+            if (!session.readOnly() && !isAdmin(player)) {
+                session.setSuspended(false);
+                releaseEditor(player);
+                player.sendMessage("You no longer have permission to modify recipes.");
+                return;
+            }
             consumer.accept(text);
             session.setSuspended(false);
             openEditor(player, session);
@@ -1249,6 +1271,18 @@ public final class GuiManager implements Listener {
 
     private boolean isCurrentMenu(Inventory inventory, OpenMenu open) {
         return inventory == open.inventory();
+    }
+
+    private boolean requiresAdmin(Player player, OpenMenu open) {
+        if (open.screen() == Screen.TYPE_PICKER || open.screen() == Screen.VANILLA_LIST
+            || open.screen() == Screen.CONFIRM_REMOVE) {
+            return true;
+        }
+        if (open.screen() != Screen.EDITOR) {
+            return false;
+        }
+        EditorSession session = editorSessions.get(player.getUniqueId());
+        return session != null && !session.readOnly();
     }
 
     private void discardStaleMenu(Player player, OpenMenu open) {

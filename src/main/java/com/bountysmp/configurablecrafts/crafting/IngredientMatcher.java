@@ -30,6 +30,14 @@ public final class IngredientMatcher {
             return false;
         }
         ItemStack sample = spec.sample();
+        if ("any".equalsIgnoreCase(spec.logic())) {
+            for (MatcherType matcher : spec.matchers()) {
+                if (matchesOne(matcher, spec, sample, input)) {
+                    return true;
+                }
+            }
+            return false;
+        }
         for (MatcherType matcher : spec.matchers()) {
             if (!matchesOne(matcher, spec, sample, input)) {
                 return false;

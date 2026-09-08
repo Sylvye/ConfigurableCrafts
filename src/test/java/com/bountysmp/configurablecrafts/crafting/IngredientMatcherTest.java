@@ -39,6 +39,17 @@ class IngredientMatcherTest extends BukkitTest {
     }
 
     @Test
+    void anyMatcherAllowsEitherConfiguredConstraint() {
+        IngredientSpec spec = IngredientSpec.fromSample(new ItemStack(Material.DIAMOND_SWORD));
+        spec.setLoreContains("magic");
+        spec.setMatcher(MatcherType.LORE_CONTAINS, true);
+        spec.setLogic("any");
+
+        assertTrue(IngredientMatcher.matches(spec, new ItemStack(Material.DIAMOND_SWORD)));
+        assertFalse(IngredientMatcher.matches(spec, new ItemStack(Material.IRON_SWORD)));
+    }
+
+    @Test
     void exactMatcherIsExclusive() {
         IngredientSpec spec = IngredientSpec.fromSample(new ItemStack(Material.DIAMOND_SWORD));
         spec.setMatcher(MatcherType.ITEM_NAME, true);

@@ -2,6 +2,8 @@ package com.bountysmp.configurablecrafts.crafting;
 
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
+import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.UseRemainder;
 import java.util.ArrayList;
 import java.util.List;
 import org.bukkit.Keyed;
@@ -12,6 +14,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.CraftItemEvent;
+import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.PrepareItemCraftEvent;
 import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.inventory.Inventory;
@@ -53,15 +56,15 @@ public final class CraftingListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onCraftCommit(CraftItemEvent event) {
         ManagedRecipe recipe = managedRecipe(event.getRecipe());
-        if (recipe == null || !(event.getWhoClicked() instanceof Player player)) {
+        if (recipe == null || !(event.getWhoClicked() instanceof Player player) || !takesCraftResult(event)) {
             return;
         }
-        limitTracker.consume(recipe, player.getUniqueId(), craftCount(event, recipe));
-        List<ItemStack> remainders = configuredRemainders(recipe, craftCount(event, recipe));
-        if (!remainders.isEmpty()) {
-            plugin.getServer().getScheduler().runTask(plugin, () -> remainders.forEach(item ->
-                player.getInventory().addItem(item).values().forEach(leftover ->
-                    player.getWorld().dropItemNaturally(player.getLocation(), leftover))));
+        int craftCount = craftCount(event, recipe);
+        limitTracker.consume(recipe, player.getUniqueId(), craftCount);
+        List<RemainderPlacement> placements = configuredRemainders(recipe, event.getInventory().getMatrix(),
+            player.getInventory(), craftCount);
+        if (!placements.isEmpty()) {
+            plugin.getServer().getScheduler().runTask(plugin, () -> applyRemainders(event.getInventory(), player, placements));
         }
     }
 
@@ -81,6 +84,10 @@ public final class CraftingListener implements Listener {
         }
         Player player = event.getWhoClicked() instanceof Player p ? p : null;
         if (player == null) {
+            event.setCancelled(true);
+            return;
+        }
+        if (!takesCraftResult(event)) {
             event.setCancelled(true);
             return;
         }
@@ -132,31 +139,148 @@ public final class CraftingListener implements Listener {
         return Math.max(0, Math.min(inputUses, inventoryUses));
     }
 
-    static List<ItemStack> configuredRemainders(ManagedRecipe recipe, int craftCount) {
-        List<ItemStack> result = new ArrayList<>();
+    static List<RemainderPlacement> configuredRemainders(ManagedRecipe recipe, ItemStack[] matrix,
+                                                          Inventory playerInventory, int craftCount) {
+        List<RemainderPlacement> placements = new ArrayList<>();
         if (craftCount <= 0) {
-            return result;
+            return placements;
         }
-        for (IngredientSpec spec : recipe.ingredients()) {
-            if (spec == null || spec.remainder() == null) {
+        IngredientSpec[] matched = RecipePattern.matchingIngredients(recipe, matrix);
+        for (int slot = 0; slot < matrix.length; slot++) {
+            IngredientSpec spec = matched[slot];
+            ItemStack input = matrix[slot];
+            if (spec == null || spec.remainder() == null || input == null || input.getType().isAir()) {
                 continue;
             }
-            ItemStack remainder = spec.remainder();
-            ItemStack sample = spec.sample();
-            Material nativeRemainder = sample == null ? null : sample.getType().getCraftingRemainingItem();
-            if (nativeRemainder != null && remainder.getType() == nativeRemainder && remainder.getAmount() == 1 && !remainder.hasItemMeta()) {
+            ItemStack configured = spec.remainder();
+            ItemStack nativeRemainder = nativeRemainder(input);
+            if (nativeRemainder != null && configured.isSimilar(nativeRemainder)
+                && configured.getAmount() == nativeRemainder.getAmount()) {
                 continue;
             }
-            int total = remainder.getAmount() * craftCount;
-            while (total > 0) {
-                ItemStack stack = remainder.clone();
-                stack.setAmount(Math.min(total, stack.getMaxStackSize()));
-                result.add(stack);
-                total -= stack.getAmount();
-            }
+            int nativeInventoryBefore = nativeRemainder == null ? 0 : countSimilar(playerInventory, nativeRemainder);
+            placements.add(new RemainderPlacement(slot, configured, nativeRemainder, nativeInventoryBefore,
+                recipe.result(), craftCount, input.clone()));
         }
-        return result;
+        return placements;
     }
+
+    private static ItemStack nativeRemainder(ItemStack input) {
+        UseRemainder component = input.getData(DataComponentTypes.USE_REMAINDER);
+        if (component != null) {
+            return component.transformInto().clone();
+        }
+        Material material = input.getType().getCraftingRemainingItem();
+        return material == null ? null : new ItemStack(material);
+    }
+
+    static void applyRemainders(CraftingInventory inventory, Player player, List<RemainderPlacement> placements) {
+        ItemStack[] matrix = inventory.getMatrix();
+        for (RemainderPlacement placement : placements) {
+            int remainingCrafts = placement.craftCount();
+            if (placement.nativeRemainder() != null) {
+                int nativeInSlot = isSimilar(matrix[placement.slot()], placement.nativeRemainder())
+                    ? matrix[placement.slot()].getAmount() : 0;
+                int expectedResultItems = isSimilar(placement.result(), placement.nativeRemainder())
+                    ? placement.result().getAmount() * placement.craftCount() : 0;
+                int nativeOverflow = Math.max(0, countSimilar(player.getInventory(), placement.nativeRemainder())
+                    - placement.nativeInventoryBefore() - expectedResultItems);
+                int expectedNative = placement.nativeRemainder().getAmount() * placement.craftCount();
+                if (nativeInSlot + nativeOverflow < expectedNative) {
+                    continue;
+                }
+                ItemStack current = matrix[placement.slot()];
+                if (isSimilar(current, placement.nativeRemainder())) {
+                    matrix[placement.slot()] = null;
+                    placeInSlotOrInventory(matrix, placement.slot(), placement.configuredRemainder(), player);
+                    remainingCrafts--;
+                }
+                int removeCount = Math.min(nativeOverflow,
+                    Math.max(0, remainingCrafts * placement.nativeRemainder().getAmount()));
+                removeSimilar(player.getInventory(), placement.nativeRemainder(), removeCount);
+                remainingCrafts -= removeCount / placement.nativeRemainder().getAmount();
+            } else if (!inputWasConsumed(matrix[placement.slot()], placement.inputBefore(), placement.craftCount())) {
+                continue;
+            }
+            if (remainingCrafts > 0 && (matrix[placement.slot()] == null || matrix[placement.slot()].getType().isAir())) {
+                matrix[placement.slot()] = placement.configuredRemainder().clone();
+                remainingCrafts--;
+            }
+            for (int i = 0; i < remainingCrafts; i++) {
+                addToInventoryOrDrop(placement.configuredRemainder(), player);
+            }
+        }
+        inventory.setMatrix(matrix);
+    }
+
+    private static void placeInSlotOrInventory(ItemStack[] matrix, int slot, ItemStack remainder, Player player) {
+        ItemStack current = matrix[slot];
+        if (current == null || current.getType().isAir()) {
+            matrix[slot] = remainder.clone();
+            return;
+        }
+        if (current.isSimilar(remainder) && current.getAmount() + remainder.getAmount() <= current.getMaxStackSize()) {
+            current.setAmount(current.getAmount() + remainder.getAmount());
+            return;
+        }
+        addToInventoryOrDrop(remainder, player);
+    }
+
+    private static void addToInventoryOrDrop(ItemStack remainder, Player player) {
+        player.getInventory().addItem(remainder.clone()).values().forEach(leftover ->
+            player.getWorld().dropItemNaturally(player.getLocation(), leftover));
+    }
+
+    private static int countSimilar(Inventory inventory, ItemStack sample) {
+        int count = 0;
+        for (ItemStack item : inventory.getStorageContents()) {
+            if (isSimilar(item, sample)) {
+                count += item.getAmount();
+            }
+        }
+        return count;
+    }
+
+    private static void removeSimilar(Inventory inventory, ItemStack sample, int amount) {
+        ItemStack[] contents = inventory.getStorageContents();
+        for (int slot = 0; slot < contents.length && amount > 0; slot++) {
+            ItemStack item = contents[slot];
+            if (!isSimilar(item, sample)) {
+                continue;
+            }
+            int removed = Math.min(amount, item.getAmount());
+            item.setAmount(item.getAmount() - removed);
+            if (item.getAmount() <= 0) {
+                contents[slot] = null;
+            }
+            amount -= removed;
+        }
+        inventory.setStorageContents(contents);
+    }
+
+    private static boolean isSimilar(ItemStack left, ItemStack right) {
+        return left != null && right != null && !left.getType().isAir() && left.isSimilar(right);
+    }
+
+    private static boolean inputWasConsumed(ItemStack current, ItemStack before, int craftCount) {
+        int expected = before.getAmount() - craftCount;
+        if (expected <= 0) {
+            return current == null || current.getType().isAir();
+        }
+        return isSimilar(current, before) && current.getAmount() == expected;
+    }
+
+    private static boolean takesCraftResult(CraftItemEvent event) {
+        return switch (event.getAction()) {
+            case PICKUP_ALL, PICKUP_SOME, PICKUP_HALF, PICKUP_ONE,
+                 MOVE_TO_OTHER_INVENTORY, HOTBAR_MOVE_AND_READD, HOTBAR_SWAP,
+                 DROP_ALL_SLOT, DROP_ONE_SLOT -> true;
+            default -> false;
+        };
+    }
+
+    record RemainderPlacement(int slot, ItemStack configuredRemainder, ItemStack nativeRemainder,
+                              int nativeInventoryBefore, ItemStack result, int craftCount, ItemStack inputBefore) {}
 
     private static int maxInputUses(ItemStack[] matrix) {
         int uses = Integer.MAX_VALUE;

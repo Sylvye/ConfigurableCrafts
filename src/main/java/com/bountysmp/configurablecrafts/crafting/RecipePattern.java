@@ -22,6 +22,53 @@ public final class RecipePattern {
         return matchesShaped(recipe, matrix);
     }
 
+    static IngredientSpec[] matchingIngredients(ManagedRecipe recipe, ItemStack[] matrix) {
+        IngredientSpec[] matched = new IngredientSpec[matrix.length];
+        if (recipe.kind() == RecipeKind.SHAPELESS) {
+            List<IngredientSpec> specs = new ArrayList<>();
+            for (IngredientSpec spec : recipe.ingredients()) {
+                if (spec != null && !spec.isEmpty()) {
+                    specs.add(spec);
+                }
+            }
+            matchShapelessIngredients(specs, matrix, new boolean[matrix.length], matched, 0);
+            return matched;
+        }
+        Bounds recipeBounds = bounds(recipe.ingredients());
+        int matrixWidth = matrixWidth(matrix);
+        Bounds inputBounds = bounds(matrix, matrixWidth);
+        if (recipeBounds.empty() || inputBounds.empty()) {
+            return matched;
+        }
+        for (int rowOffset = 0; rowOffset < recipeBounds.height(); rowOffset++) {
+            for (int colOffset = 0; colOffset < recipeBounds.width(); colOffset++) {
+                int matrixSlot = (inputBounds.minRow + rowOffset) * matrixWidth + inputBounds.minCol + colOffset;
+                matched[matrixSlot] = recipe.ingredient((recipeBounds.minRow + rowOffset) * 3 + recipeBounds.minCol + colOffset);
+            }
+        }
+        return matched;
+    }
+
+    private static boolean matchShapelessIngredients(List<IngredientSpec> specs, ItemStack[] matrix,
+                                                       boolean[] used, IngredientSpec[] matched, int index) {
+        if (index == specs.size()) {
+            return true;
+        }
+        IngredientSpec spec = specs.get(index);
+        for (int slot = 0; slot < matrix.length; slot++) {
+            if (!used[slot] && IngredientMatcher.matches(spec, matrix[slot])) {
+                used[slot] = true;
+                matched[slot] = spec;
+                if (matchShapelessIngredients(specs, matrix, used, matched, index + 1)) {
+                    return true;
+                }
+                matched[slot] = null;
+                used[slot] = false;
+            }
+        }
+        return false;
+    }
+
     public static String signature(ManagedRecipe recipe) {
         if (recipe.kind() == RecipeKind.SHAPELESS) {
             List<String> tokens = new ArrayList<>();
