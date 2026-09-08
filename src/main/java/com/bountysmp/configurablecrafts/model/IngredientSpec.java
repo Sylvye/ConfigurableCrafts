@@ -12,6 +12,7 @@ public final class IngredientSpec {
     private String logic = "all";
     private String loreContains = "";
     private String tagKey = "";
+    private ItemStack remainder;
     private final Map<String, Integer> enchantments = new LinkedHashMap<>();
 
     public static IngredientSpec fromSample(ItemStack sample) {
@@ -111,6 +112,14 @@ public final class IngredientSpec {
         this.tagKey = tagKey == null ? "" : tagKey.toLowerCase(Locale.ROOT);
     }
 
+    public ItemStack remainder() {
+        return remainder == null ? null : remainder.clone();
+    }
+
+    public void setRemainder(ItemStack remainder) {
+        this.remainder = remainder == null || remainder.getType().isAir() ? null : remainder.clone();
+    }
+
     public Map<String, Integer> enchantments() {
         return enchantments;
     }
@@ -122,6 +131,7 @@ public final class IngredientSpec {
         copy.logic = logic;
         copy.loreContains = loreContains;
         copy.tagKey = tagKey;
+        copy.setRemainder(remainder);
         copy.enchantments.putAll(enchantments);
         return copy;
     }

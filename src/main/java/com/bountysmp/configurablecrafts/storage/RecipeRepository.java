@@ -110,6 +110,7 @@ public final class RecipeRepository {
         }
         spec.setLoreContains(section.getString("lore-contains", ""));
         spec.setTagKey(section.getString("tag", ""));
+        spec.setRemainder(section.getItemStack("remainder"));
         spec.normalizeMatchers();
         if (spec.isEmpty()) {
             return null;
@@ -183,6 +184,7 @@ public final class RecipeRepository {
         section.set("matchers", spec.matchers().stream().map(Enum::name).toList());
         section.set("lore-contains", spec.loreContains());
         section.set("tag", spec.tagKey());
+        section.set("remainder", spec.remainder());
         ConfigurationSection enchantments = section.createSection("enchantments");
         for (Map.Entry<String, Integer> entry : spec.enchantments().entrySet()) {
             enchantments.set(entry.getKey(), entry.getValue());

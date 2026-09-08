@@ -27,6 +27,9 @@ class RecipeRepositoryTest extends BukkitTest {
         recipe.setAllowCrafters(true);
         recipe.setResult(new ItemStack(Material.GOLDEN_APPLE));
         recipe.setIngredient(0, IngredientSpec.fromSample(new ItemStack(Material.APPLE)));
+        IngredientSpec ingredient = recipe.ingredient(0);
+        ingredient.setRemainder(new ItemStack(Material.BOWL));
+        recipe.setIngredient(0, ingredient);
         recipe.conditions().dimensions().add("minecraft:overworld");
         recipe.conditions().setMinimumExperienceLevel(7);
         recipe.playerLimit().set(5, 600);
@@ -44,6 +47,7 @@ class RecipeRepositoryTest extends BukkitTest {
         assertTrue(copy.allowCrafters());
         assertEquals(Material.GOLDEN_APPLE, copy.result().getType());
         assertEquals(Material.APPLE, copy.ingredient(0).sample().getType());
+        assertEquals(Material.BOWL, copy.ingredient(0).remainder().getType());
         assertEquals(7, copy.conditions().minimumExperienceLevel());
         assertEquals(5, copy.playerLimit().crafts());
         assertEquals(600, copy.playerLimit().windowSeconds());

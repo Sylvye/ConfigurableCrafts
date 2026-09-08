@@ -55,6 +55,7 @@ public final class GuiManager implements Listener {
     };
     private static final int[] GRID_SLOTS = {10, 11, 12, 19, 20, 21, 28, 29, 30};
     private static final int RESULT_SLOT = 24;
+    private static final int REMAINDER_SLOT = 25;
     private static final int MAIN_FILTER_SLOT = 16;
     private static final int TYPE_PICKER_BACK_SLOT = 49;
     private static final WorkstationOption[] WORKSTATION_OPTIONS = {
@@ -351,6 +352,10 @@ public final class GuiManager implements Listener {
             return;
         }
         if (hasSelectedItemIngredient(session)) {
+            if (slot == REMAINDER_SLOT && session.recipe().kind().isCraftingTable()) {
+                handleRemainderClick(player, event, session);
+                return;
+            }
             handleMatcherClick(player, session, slot);
         } else {
             handleConditionClick(player, session, slot);
@@ -433,6 +438,42 @@ public final class GuiManager implements Listener {
         } else {
             session.setIngredient(ingredientIndex, itemStack, owned);
         }
+    }
+
+    private void handleRemainderClick(Player player, InventoryClickEvent event, EditorSession session) {
+        int selected = session.selectedSlot();
+        ItemStack cursor = event.getCursor();
+        ItemStack remainder = session.remainder(selected);
+        if (GuiUtil.isEmpty(cursor)) {
+            if (GuiUtil.isEmpty(remainder)) {
+                return;
+            }
+            player.setItemOnCursor(remainder);
+            session.setRemainder(selected, null, false);
+        } else if (GuiUtil.isEmpty(remainder)) {
+            ItemStack placed = cursor.clone();
+            if (event.getClick().isRightClick()) {
+                placed.setAmount(1);
+                ItemStack left = cursor.clone();
+                left.setAmount(left.getAmount() - 1);
+                player.setItemOnCursor(left.getAmount() <= 0 ? null : left);
+            }
+            session.setRemainder(selected, placed, true);
+        } else if (event.getClick().isRightClick()
+            && session.ownsRemainder(selected)
+            && remainder.isSimilar(cursor)
+            && remainder.getAmount() < remainder.getMaxStackSize()) {
+            ItemStack updated = remainder.clone();
+            updated.setAmount(updated.getAmount() + 1);
+            ItemStack left = cursor.clone();
+            left.setAmount(left.getAmount() - 1);
+            player.setItemOnCursor(left.getAmount() <= 0 ? null : left);
+            session.setRemainder(selected, updated, true);
+        } else if (event.getClick().isLeftClick()) {
+            player.setItemOnCursor(remainder);
+            session.setRemainder(selected, cursor, true);
+        }
+        renderEditor(player, session, event.getView().getTopInventory());
     }
 
     private void handleMatcherClick(Player player, EditorSession session, int slot) {
@@ -842,6 +883,12 @@ public final class GuiManager implements Listener {
         inventory.setItem(15, matcherItem(spec, MatcherType.EXACT));
         inventory.setItem(16, matcherItem(spec, MatcherType.ITEM_NAME));
         inventory.setItem(23, matcherItem(spec, MatcherType.LORE_CONTAINS, spec.loreContains().isBlank() ? "No lore text set." : spec.loreContains()));
+        if (session.recipe().kind().isCraftingTable()) {
+            ItemStack remainder = spec.remainder();
+            inventory.setItem(REMAINDER_SLOT, GuiUtil.isEmpty(remainder)
+                ? GuiUtil.item(Material.BUCKET, GuiUtil.Tone.NEUTRAL, "Remainder Item", "Place the item returned after crafting here.", "Example: an empty bucket.")
+                : GuiUtil.namedClone(remainder, "Remainder: " + ItemText.displayName(remainder), GuiUtil.Tone.INFO, List.of("Returned after this ingredient is consumed.", "Click with an empty cursor to clear.")));
+        }
         inventory.setItem(32, matcherItem(spec, MatcherType.TAG, spec.tagKey().isBlank() ? "No tag set." : spec.tagKey()));
         inventory.setItem(33, matcherItem(spec, MatcherType.ENCHANTMENTS, spec.enchantments().isEmpty() ? "No enchantments captured." : spec.enchantments().toString()));
         inventory.setItem(41, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Clear Selection"));

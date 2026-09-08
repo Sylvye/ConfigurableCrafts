@@ -1,7 +1,11 @@
 package com.bountysmp.configurablecrafts.crafting;
 
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
+import com.bountysmp.configurablecrafts.model.IngredientSpec;
+import java.util.ArrayList;
+import java.util.List;
 import org.bukkit.Keyed;
+import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.block.CrafterCraftEvent;
 import org.bukkit.event.EventHandler;
@@ -13,12 +17,15 @@ import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
+import org.bukkit.plugin.Plugin;
 
 public final class CraftingListener implements Listener {
     private final ManagedRecipeRegistry registry;
     private final CraftLimitTracker limitTracker;
+    private final Plugin plugin;
 
-    public CraftingListener(ManagedRecipeRegistry registry, CraftLimitTracker limitTracker) {
+    public CraftingListener(Plugin plugin, ManagedRecipeRegistry registry, CraftLimitTracker limitTracker) {
+        this.plugin = plugin;
         this.registry = registry;
         this.limitTracker = limitTracker;
     }
@@ -50,6 +57,12 @@ public final class CraftingListener implements Listener {
             return;
         }
         limitTracker.consume(recipe, player.getUniqueId(), craftCount(event, recipe));
+        List<ItemStack> remainders = configuredRemainders(recipe, craftCount(event, recipe));
+        if (!remainders.isEmpty()) {
+            plugin.getServer().getScheduler().runTask(plugin, () -> remainders.forEach(item ->
+                player.getInventory().addItem(item).values().forEach(leftover ->
+                    player.getWorld().dropItemNaturally(player.getLocation(), leftover))));
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -117,6 +130,32 @@ public final class CraftingListener implements Listener {
         int inputUses = maxInputUses(matrix);
         int inventoryUses = maxInventoryUses(destination, result);
         return Math.max(0, Math.min(inputUses, inventoryUses));
+    }
+
+    static List<ItemStack> configuredRemainders(ManagedRecipe recipe, int craftCount) {
+        List<ItemStack> result = new ArrayList<>();
+        if (craftCount <= 0) {
+            return result;
+        }
+        for (IngredientSpec spec : recipe.ingredients()) {
+            if (spec == null || spec.remainder() == null) {
+                continue;
+            }
+            ItemStack remainder = spec.remainder();
+            ItemStack sample = spec.sample();
+            Material nativeRemainder = sample == null ? null : sample.getType().getCraftingRemainingItem();
+            if (nativeRemainder != null && remainder.getType() == nativeRemainder && remainder.getAmount() == 1 && !remainder.hasItemMeta()) {
+                continue;
+            }
+            int total = remainder.getAmount() * craftCount;
+            while (total > 0) {
+                ItemStack stack = remainder.clone();
+                stack.setAmount(Math.min(total, stack.getMaxStackSize()));
+                result.add(stack);
+                total -= stack.getAmount();
+            }
+        }
+        return result;
     }
 
     private static int maxInputUses(ItemStack[] matrix) {

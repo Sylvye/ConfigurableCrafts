@@ -10,6 +10,7 @@ final class EditorSession {
     private final ManagedRecipe recipe;
     private final ItemStack[] ingredients = new ItemStack[9];
     private final boolean[] ownedIngredients = new boolean[9];
+    private final boolean[] ownedRemainders = new boolean[9];
     private ItemStack result;
     private boolean ownedResult;
     private int selectedSlot = -1;
@@ -58,6 +59,25 @@ final class EditorSession {
 
     boolean ownsIngredient(int index) {
         return ownedIngredients[index];
+    }
+
+    ItemStack remainder(int index) {
+        IngredientSpec spec = recipe.ingredient(index);
+        return spec == null ? null : spec.remainder();
+    }
+
+    void setRemainder(int index, ItemStack itemStack, boolean owned) {
+        IngredientSpec spec = recipe.ingredient(index);
+        if (spec == null) {
+            return;
+        }
+        spec.setRemainder(itemStack);
+        recipe.setIngredient(index, spec);
+        ownedRemainders[index] = !GuiUtil.isEmpty(itemStack) && owned;
+    }
+
+    boolean ownsRemainder(int index) {
+        return ownedRemainders[index];
     }
 
     ItemStack result() {
@@ -126,6 +146,10 @@ final class EditorSession {
                 give(player, ingredients[i]);
             }
             ownedIngredients[i] = false;
+            if (ownedRemainders[i] && !GuiUtil.isEmpty(remainder(i))) {
+                give(player, remainder(i));
+            }
+            ownedRemainders[i] = false;
         }
         if (ownedResult && !GuiUtil.isEmpty(result)) {
             give(player, result);

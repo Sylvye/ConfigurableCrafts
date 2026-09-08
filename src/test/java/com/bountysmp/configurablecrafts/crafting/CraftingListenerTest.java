@@ -3,6 +3,9 @@ package com.bountysmp.configurablecrafts.crafting;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.bountysmp.configurablecrafts.BukkitTest;
+import com.bountysmp.configurablecrafts.model.IngredientSpec;
+import com.bountysmp.configurablecrafts.model.ManagedRecipe;
+import com.bountysmp.configurablecrafts.model.RecipeKind;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.inventory.Inventory;
@@ -31,5 +34,29 @@ class CraftingListenerTest extends BukkitTest {
         inventory.setItem(0, new ItemStack(Material.EMERALD, 63));
 
         assertEquals(1, CraftingListener.shiftCraftCount(matrix, inventory, new ItemStack(Material.EMERALD)));
+    }
+
+    @Test
+    void configuredRemaindersScaleAndSplitIntoStacks() {
+        ManagedRecipe recipe = new ManagedRecipe("remainders", RecipeKind.SHAPELESS);
+        IngredientSpec ingredient = IngredientSpec.fromSample(new ItemStack(Material.DIAMOND));
+        ingredient.setRemainder(new ItemStack(Material.BOWL, 20));
+        recipe.setIngredient(0, ingredient);
+
+        var remainders = CraftingListener.configuredRemainders(recipe, 4);
+
+        assertEquals(2, remainders.size());
+        assertEquals(64, remainders.get(0).getAmount());
+        assertEquals(16, remainders.get(1).getAmount());
+    }
+
+    @Test
+    void configuredRemainderDoesNotDuplicateVanillaContainer() {
+        ManagedRecipe recipe = new ManagedRecipe("milk", RecipeKind.SHAPELESS);
+        IngredientSpec ingredient = IngredientSpec.fromSample(new ItemStack(Material.MILK_BUCKET));
+        ingredient.setRemainder(new ItemStack(Material.BUCKET));
+        recipe.setIngredient(0, ingredient);
+
+        assertEquals(0, CraftingListener.configuredRemainders(recipe, 1).size());
     }
 }

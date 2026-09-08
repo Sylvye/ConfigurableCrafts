@@ -43,7 +43,7 @@ public final class ConfigurableCraftsPlugin extends JavaPlugin {
 
         getServer().getPluginManager().registerEvents(chatPromptManager, this);
         getServer().getPluginManager().registerEvents(guiManager, this);
-        getServer().getPluginManager().registerEvents(new CraftingListener(recipeRegistry, craftLimitTracker), this);
+        getServer().getPluginManager().registerEvents(new CraftingListener(this, recipeRegistry, craftLimitTracker), this);
         getServer().getPluginManager().registerEvents(new CookingRecipeListener(recipeRegistry, craftLimitTracker), this);
         getServer().getPluginManager().registerEvents(new WorkstationUseListener(recipeRegistry, craftLimitTracker), this);
         getServer().getPluginManager().registerEvents(brewingRecipeService, this);
