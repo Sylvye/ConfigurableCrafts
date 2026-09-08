@@ -2,6 +2,7 @@ package com.bountysmp.configurablecrafts.gui;
 
 import com.bountysmp.configurablecrafts.crafting.IngredientMatcher;
 import com.bountysmp.configurablecrafts.crafting.ManagedRecipeRegistry;
+import com.bountysmp.configurablecrafts.crafting.VanillaBrewingCatalog;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
 import com.bountysmp.configurablecrafts.model.ManagedRecipe;
 import com.bountysmp.configurablecrafts.model.MatcherType;
@@ -93,9 +94,10 @@ public final class GuiManager implements Listener {
         if (admin) {
             inventory.setItem(10, GuiUtil.item(Material.LIME_CONCRETE, GuiUtil.Tone.SUCCESS, "Create New Recipe", "Start a shaped or shapeless custom recipe."));
             inventory.setItem(12, GuiUtil.item(Material.CRAFTING_TABLE, GuiUtil.Tone.INFO, "Edit Vanilla Recipe", "Browse and override vanilla crafting recipes."));
+            inventory.setItem(13, GuiUtil.item(Material.BREWING_STAND, GuiUtil.Tone.INFO, "Edit Vanilla Brewing", "Browse every vanilla brewing transition."));
             inventory.setItem(14, GuiUtil.item(Material.OAK_SIGN, GuiUtil.Tone.WARNING, "Search Modified Recipes", query.isBlank() ? "No search active." : "Search: " + query));
         } else {
-            inventory.setItem(13, GuiUtil.item(Material.BOOK, GuiUtil.Tone.INFO, "Recipes", "Custom, modified, and disabled recipes."));
+            inventory.setItem(13, GuiUtil.item(Material.BREWING_STAND, GuiUtil.Tone.INFO, "Brewing Changes", "See changed potion recipes."));
         }
         inventory.setItem(MAIN_FILTER_SLOT, filterItem(filter));
 
@@ -168,6 +170,7 @@ public final class GuiManager implements Listener {
             case MAIN -> handleMainClick(player, open, event.getRawSlot(), event.getClick());
             case TYPE_PICKER -> handleTypePickerClick(player, event.getRawSlot());
             case VANILLA_LIST -> handleVanillaClick(player, open, event.getRawSlot(), event.getClick());
+            case BREWING_LIST -> handleBrewingListClick(player, open, event.getRawSlot(), event.getClick());
             case EDITOR -> handleEditorClick(player, event, event.getRawSlot());
             case CONFIRM_REMOVE -> handleConfirmClick(player, open, event.getRawSlot());
         }
@@ -231,6 +234,10 @@ public final class GuiManager implements Listener {
         }
         if (admin && slot == 12) {
             openVanillaList(player, 0, "");
+            return;
+        }
+        if (slot == 13) {
+            openBrewingList(player, 0);
             return;
         }
         if (admin && slot == 14) {
@@ -329,6 +336,31 @@ public final class GuiManager implements Listener {
         }
     }
 
+    private void handleBrewingListClick(Player player, OpenMenu open, int slot, ClickType click) {
+        if (slot == 45) {
+            openMain(player, 0, "");
+            return;
+        }
+        if (slot == 48) {
+            openBrewingList(player, open.page - 1);
+            return;
+        }
+        if (slot == 50) {
+            openBrewingList(player, open.page + 1);
+            return;
+        }
+        int listIndex = indexOf(VANILLA_LIST_SLOTS, slot);
+        List<VanillaBrewingCatalog.Entry> entries = visibleBrewingEntries(player);
+        int index = open.page * VANILLA_LIST_SLOTS.length + listIndex;
+        if (listIndex < 0 || index < 0 || index >= entries.size() || !click.isLeftClick()) {
+            return;
+        }
+        VanillaBrewingCatalog.Entry entry = entries.get(index);
+        ManagedRecipe override = registry.vanillaBrewingOverride(entry.sourceKey());
+        ManagedRecipe recipe = override == null ? entry.toManagedRecipe() : override;
+        openEditor(player, new EditorSession(recipe, !isAdmin(player)));
+    }
+
     private void handleEditorClick(Player player, InventoryClickEvent event, int slot) {
         EditorSession session = editorSessions.get(player.getUniqueId());
         if (session == null) {
@@ -340,11 +372,22 @@ public final class GuiManager implements Listener {
             return;
         }
         if (slot == RESULT_SLOT) {
+            if (VanillaBrewingCatalog.isOverride(session.recipe())) {
+                player.sendMessage("Vanilla brewing results are fixed. Change the potion input or ingredient.");
+                return;
+            }
             handleEditorItemClick(player, event, session, -1, true);
             return;
         }
         if (slot == 46 && !session.readOnly()) {
             saveEditor(player, session);
+            return;
+        }
+        if (slot == 47 && !session.readOnly() && VanillaBrewingCatalog.isOverride(session.recipe())) {
+            registry.removeOrRevert(session.recipe().id());
+            releaseEditor(player);
+            player.sendMessage("Vanilla brewing recipe restored.");
+            openBrewingList(player, 0);
             return;
         }
         if (slot == 49 || slot == 52) {
@@ -401,7 +444,7 @@ public final class GuiManager implements Listener {
             if (GuiUtil.isEmpty(slotItem)) {
                 return;
             }
-            player.setItemOnCursor(slotItem);
+            player.setItemOnCursor(owned ? slotItem : null);
             setSessionSlot(session, ingredientIndex, resultSlot, null, false);
             renderEditor(player, session, event.getView().getTopInventory());
             return;
@@ -436,7 +479,7 @@ public final class GuiManager implements Listener {
         }
 
         if (event.getClick().isLeftClick()) {
-            player.setItemOnCursor(slotItem);
+            player.setItemOnCursor(owned ? slotItem : null);
             setSessionSlot(session, ingredientIndex, resultSlot, cursor, true);
             renderEditor(player, session, event.getView().getTopInventory());
         }
@@ -689,6 +732,7 @@ public final class GuiManager implements Listener {
         }
         session.applyItemsToRecipe();
         normalizeActiveIngredients(session.recipe());
+        normalizeVanillaBrewingInput(session.recipe());
         String error = registry.validateForSave(session.recipe());
         if (error != null) {
             player.sendMessage(error);
@@ -749,6 +793,43 @@ public final class GuiManager implements Listener {
         openMenus.put(player.getUniqueId(), new OpenMenu(Screen.VANILLA_LIST, safePage, query, null, null, inventory));
     }
 
+    private void openBrewingList(Player player, int page) {
+        boolean admin = isAdmin(player);
+        Inventory inventory = Bukkit.createInventory(player, 54, admin ? "Edit Vanilla Brewing" : "Brewing Changes");
+        fill(inventory);
+        List<VanillaBrewingCatalog.Entry> entries = visibleBrewingEntries(player);
+        int maxPage = maxPage(entries.size(), VANILLA_LIST_SLOTS.length);
+        int safePage = clampPage(page, maxPage);
+        for (int i = 0; i < VANILLA_LIST_SLOTS.length; i++) {
+            int index = safePage * VANILLA_LIST_SLOTS.length + i;
+            if (index >= entries.size()) {
+                break;
+            }
+            VanillaBrewingCatalog.Entry entry = entries.get(index);
+            ManagedRecipe override = registry.vanillaBrewingOverride(entry.sourceKey());
+            ManagedRecipe shown = override == null ? entry.toManagedRecipe() : override;
+            List<String> lore = new ArrayList<>();
+            lore.add(brewingRecipeLine(shown));
+            lore.add(override == null ? "Vanilla" : "Changed from: " + brewingRecipeLine(entry.toManagedRecipe()));
+            lore.add(admin ? "Left-click to edit." : "Left-click to view.");
+            inventory.setItem(VANILLA_LIST_SLOTS[i], GuiUtil.namedClone(shown.result(), entry.displayName(),
+                override == null ? GuiUtil.Tone.NEUTRAL : GuiUtil.Tone.INFO, lore));
+        }
+        inventory.setItem(45, GuiUtil.item(Material.BARRIER, GuiUtil.Tone.DANGER, "Back"));
+        inventory.setItem(48, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Previous Page"));
+        inventory.setItem(49, GuiUtil.item(Material.PAPER, GuiUtil.Tone.NEUTRAL, "Page " + (safePage + 1) + " / " + (maxPage + 1)));
+        inventory.setItem(50, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Next Page"));
+        player.openInventory(inventory);
+        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.BREWING_LIST, safePage, "", null, null, inventory));
+    }
+
+    private List<VanillaBrewingCatalog.Entry> visibleBrewingEntries(Player player) {
+        return registry.vanillaBrewingRecipes().stream()
+            .filter(entry -> isAdmin(player) || (registry.vanillaBrewingOverride(entry.sourceKey()) != null
+                && registry.vanillaBrewingOverride(entry.sourceKey()).enabled()))
+            .toList();
+    }
+
     private void openConfirmRemove(Player player, String recipeId) {
         Inventory inventory = Bukkit.createInventory(player, 27, "Confirm Remove/Revert");
         fill(inventory);
@@ -783,7 +864,12 @@ public final class GuiManager implements Listener {
         }
         ItemStack result = session.result();
         inventory.setItem(RESULT_SLOT, GuiUtil.isEmpty(result) ? GuiUtil.item(Material.RED_STAINED_GLASS_PANE, GuiUtil.Tone.DANGER, "Result Slot", "Place the output item here.") : displayResult(session, result));
-        inventory.setItem(4, GuiUtil.item(Material.BOOK, GuiUtil.Tone.INFO, session.recipe().kind().displayName(), session.recipe().enabled() ? "Enabled" : "Disabled"));
+        VanillaBrewingCatalog.Entry vanillaBrewing = VanillaBrewingCatalog.bySourceKey(session.recipe().sourceKey());
+        inventory.setItem(4, vanillaBrewing == null
+            ? GuiUtil.item(Material.BOOK, GuiUtil.Tone.INFO, session.recipe().kind().displayName(), session.recipe().enabled() ? "Enabled" : "Disabled")
+            : GuiUtil.item(Material.BREWING_STAND, GuiUtil.Tone.INFO, vanillaBrewing.displayName(),
+                "Now: " + brewingRecipeLine(session.recipe()),
+                "Vanilla: " + brewingRecipeLine(vanillaBrewing.toManagedRecipe())));
         if (hasSelectedItemIngredient(session)) {
             renderMatcherControls(inventory, session);
         } else {
@@ -794,6 +880,9 @@ public final class GuiManager implements Listener {
         }
         if (!session.readOnly()) {
             inventory.setItem(46, GuiUtil.item(Material.LIME_CONCRETE, GuiUtil.Tone.SUCCESS, "Save Recipe"));
+            if (vanillaBrewing != null && registry.vanillaBrewingOverride(session.recipe().sourceKey()) != null) {
+                inventory.setItem(47, GuiUtil.item(Material.RED_DYE, GuiUtil.Tone.DANGER, "Restore Vanilla Recipe", "Remove this brewing change."));
+            }
         }
         inventory.setItem(49, GuiUtil.item(Material.BARRIER, GuiUtil.Tone.DANGER, session.readOnly() ? "Back" : "Cancel"));
         inventory.setItem(52, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Back to Menu"));
@@ -804,7 +893,14 @@ public final class GuiManager implements Listener {
     }
 
     private ItemStack displayResult(EditorSession session, ItemStack result) {
-        return session.readOnly() ? GuiUtil.displayClone(result, "Recipe result") : result;
+        return session.readOnly() || VanillaBrewingCatalog.isOverride(session.recipe())
+            ? GuiUtil.displayClone(result, "Fixed vanilla result") : result;
+    }
+
+    private String brewingRecipeLine(ManagedRecipe recipe) {
+        return ItemText.displayName(recipe.ingredient(0) == null ? null : recipe.ingredient(0).sample())
+            + " + " + ItemText.displayName(recipe.ingredient(1) == null ? null : recipe.ingredient(1).sample())
+            + " → " + ItemText.displayName(recipe.result());
     }
 
     private ItemStack displayTagIngredient(IngredientSpec spec, int cycleStep) {
@@ -1326,6 +1422,23 @@ public final class GuiManager implements Listener {
         }
     }
 
+    private void normalizeVanillaBrewingInput(ManagedRecipe recipe) {
+        if (!VanillaBrewingCatalog.isOverride(recipe) || recipe.ingredient(0) == null) {
+            return;
+        }
+        IngredientSpec input = recipe.ingredient(0);
+        ItemStack sample = input.sample();
+        if (sample != null && (sample.getType() == Material.SPLASH_POTION || sample.getType() == Material.LINGERING_POTION)) {
+            sample.setType(Material.POTION);
+            input.setSample(sample);
+            recipe.setIngredient(0, input);
+        }
+        VanillaBrewingCatalog.Entry entry = VanillaBrewingCatalog.bySourceKey(recipe.sourceKey());
+        if (entry != null) {
+            recipe.setResult(entry.result());
+        }
+    }
+
     private int indexOf(int[] slots, int rawSlot) {
         for (int i = 0; i < slots.length; i++) {
             if (slots[i] == rawSlot) {
@@ -1347,6 +1460,7 @@ public final class GuiManager implements Listener {
         MAIN,
         TYPE_PICKER,
         VANILLA_LIST,
+        BREWING_LIST,
         EDITOR,
         CONFIRM_REMOVE
     }

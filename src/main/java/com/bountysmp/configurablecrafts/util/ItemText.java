@@ -7,6 +7,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.PotionMeta;
 
 public final class ItemText {
     private static final PlainTextComponentSerializer PLAIN = PlainTextComponentSerializer.plainText();
@@ -21,6 +22,14 @@ public final class ItemText {
         String custom = customName(itemStack);
         if (custom != null && !custom.isBlank()) {
             return custom;
+        }
+        if (itemStack.getItemMeta() instanceof PotionMeta potionMeta && potionMeta.getBasePotionType() != null) {
+            String potion = humanize(potionMeta.getBasePotionType().getKey().getKey());
+            return switch (itemStack.getType()) {
+                case SPLASH_POTION -> "Splash " + potion + " Potion";
+                case LINGERING_POTION -> "Lingering " + potion + " Potion";
+                default -> potion + " Potion";
+            };
         }
         return humanize(itemStack.getType().name());
     }

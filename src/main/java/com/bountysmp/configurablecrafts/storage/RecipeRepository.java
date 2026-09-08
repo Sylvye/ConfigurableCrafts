@@ -7,6 +7,7 @@ import com.bountysmp.configurablecrafts.model.RecipeConditions;
 import com.bountysmp.configurablecrafts.model.RecipeKind;
 import com.bountysmp.configurablecrafts.model.RecipeLimit;
 import com.bountysmp.configurablecrafts.model.WeatherMode;
+import com.bountysmp.configurablecrafts.crafting.VanillaBrewingCatalog;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -54,6 +55,7 @@ public final class RecipeRepository {
         }
         YamlConfiguration yaml = new YamlConfiguration();
         yaml.set("schema", SCHEMA_VERSION);
+        yaml.set("vanilla-brewing-catalog", VanillaBrewingCatalog.VERSION);
         ConfigurationSection recipesSection = yaml.createSection("recipes");
         for (ManagedRecipe recipe : recipes) {
             writeRecipe(recipesSection.createSection(recipe.id()), recipe);

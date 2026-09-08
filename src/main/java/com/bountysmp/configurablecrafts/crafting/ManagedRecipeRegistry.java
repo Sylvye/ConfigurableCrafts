@@ -142,6 +142,19 @@ public final class ManagedRecipeRegistry {
         return new ArrayList<>(vanillaRecipes.values());
     }
 
+    public List<VanillaBrewingCatalog.Entry> vanillaBrewingRecipes() {
+        return VanillaBrewingCatalog.entries();
+    }
+
+    public ManagedRecipe vanillaBrewingOverride(String sourceKey) {
+        for (ManagedRecipe recipe : recipes.values()) {
+            if (sourceKey != null && sourceKey.equals(recipe.sourceKey())) {
+                return recipe;
+            }
+        }
+        return null;
+    }
+
     public NamespacedKey keyOf(Recipe recipe) {
         return recipe instanceof Keyed keyed ? keyed.getKey() : null;
     }
@@ -266,12 +279,7 @@ public final class ManagedRecipeRegistry {
             return;
         }
         if (recipe.kind().canonical() == RecipeKind.BREWING) {
-            potionMixes.add(new PotionMix(
-                recipe.managedKey(plugin),
-                recipe.result(),
-                PotionMix.createPredicateChoice(input -> IngredientMatcher.matches(recipe.ingredient(0), input)),
-                PotionMix.createPredicateChoice(ingredient -> IngredientMatcher.matches(recipe.ingredient(1), ingredient))
-            ));
+            registerPotionMixes(recipe);
             managedKeys.put(recipe.managedKey(plugin), recipe.id());
             return;
         }
@@ -292,7 +300,52 @@ public final class ManagedRecipeRegistry {
         NamespacedKey key = recipe.managedKey(plugin);
         Bukkit.removeRecipe(key, true);
         potionMixes.remove(key);
+        if (VanillaBrewingCatalog.isOverride(recipe)) {
+            for (Material material : potionContainers()) {
+                potionMixes.remove(potionMixKey(recipe, material));
+            }
+        }
         managedKeys.remove(key);
+    }
+
+    private void registerPotionMixes(ManagedRecipe recipe) {
+        VanillaBrewingCatalog.Entry vanilla = VanillaBrewingCatalog.bySourceKey(recipe.sourceKey());
+        if (vanilla == null) {
+            potionMixes.add(new PotionMix(
+                recipe.managedKey(plugin), recipe.result(),
+                PotionMix.createPredicateChoice(input -> IngredientMatcher.matches(recipe.ingredient(0), input)),
+                PotionMix.createPredicateChoice(ingredient -> IngredientMatcher.matches(recipe.ingredient(1), ingredient))
+            ));
+            return;
+        }
+        for (Material container : potionContainers()) {
+            if (vanilla.containerConversion() && container != vanilla.inputMaterial()) {
+                continue;
+            }
+            ItemStack result = resultForContainer(recipe.result(), vanilla, container);
+            NamespacedKey key = potionMixKey(recipe, container);
+            potionMixes.add(new PotionMix(
+                key, result,
+                PotionMix.createPredicateChoice(input -> input.getType() == container
+                    && VanillaBrewingCatalog.matchesPotionInput(recipe.ingredient(0), input)),
+                PotionMix.createPredicateChoice(ingredient -> IngredientMatcher.matches(recipe.ingredient(1), ingredient))
+            ));
+            managedKeys.put(key, recipe.id());
+        }
+    }
+
+    private ItemStack resultForContainer(ItemStack configuredResult, VanillaBrewingCatalog.Entry vanilla, Material inputContainer) {
+        ItemStack result = configuredResult.clone();
+        result.setType(vanilla.containerConversion() ? vanilla.resultMaterial() : inputContainer);
+        return result;
+    }
+
+    private List<Material> potionContainers() {
+        return List.of(Material.POTION, Material.SPLASH_POTION, Material.LINGERING_POTION);
+    }
+
+    private NamespacedKey potionMixKey(ManagedRecipe recipe, Material material) {
+        return new NamespacedKey(plugin, "recipe/" + recipe.id() + "/" + material.name().toLowerCase(Locale.ROOT));
     }
 
     private void restoreSource(ManagedRecipe recipe) {
@@ -508,6 +561,12 @@ public final class ManagedRecipeRegistry {
             }
             if (isEmptyIngredient(recipe, 1)) {
                 return "Set a brewing ingredient before saving.";
+            }
+            if (VanillaBrewingCatalog.isOverride(recipe)) {
+                ItemStack input = recipe.ingredient(0).sample();
+                if (input == null || !isPotionLike(input.getType())) {
+                    return "Vanilla brewing overrides must use a potion input.";
+                }
             }
             return null;
         }
