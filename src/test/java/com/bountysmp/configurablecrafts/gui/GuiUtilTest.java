@@ -1,18 +1,79 @@
 package com.bountysmp.configurablecrafts.gui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.bountysmp.configurablecrafts.BukkitTest;
+import com.bountysmp.configurablecrafts.model.ManagedRecipe;
+import com.bountysmp.configurablecrafts.model.RecipeKind;
 import java.util.List;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Material;
+import org.bukkit.enchantments.Enchantment;
+import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.EnchantmentStorageMeta;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.junit.jupiter.api.Test;
 
 class GuiUtilTest extends BukkitTest {
+    @Test
+    void recipePreviewPreservesEnchantedBookLoreAboveRecipeInfo() {
+        ItemStack book = new ItemStack(Material.ENCHANTED_BOOK);
+        Component originalLore = Component.text("A rare enchantment", NamedTextColor.GOLD)
+            .decorate(TextDecoration.BOLD);
+        EnchantmentStorageMeta meta = (EnchantmentStorageMeta) book.getItemMeta();
+        meta.lore(List.of(originalLore));
+        meta.addStoredEnchant(Enchantment.SHARPNESS, 3, false);
+        book.setItemMeta(meta);
+        ManagedRecipe recipe = new ManagedRecipe("book", RecipeKind.SHAPELESS);
+        recipe.setResult(book);
+
+        ItemStack preview = new GuiManager(null, null, null).recipeIcon(recipe, true, false);
+        recipe.setEnabled(false);
+        ItemStack barrier = new GuiManager(null, null, null).recipeIcon(recipe, true, true);
+        List<Component> lines = preview.getItemMeta().lore();
+
+        assertEquals(originalLore, lines.get(0));
+        assertEquals(3, ((EnchantmentStorageMeta) preview.getItemMeta()).getStoredEnchantLevel(Enchantment.SHARPNESS));
+        assertTrue(!preview.getItemMeta().hasItemFlag(ItemFlag.HIDE_STORED_ENCHANTS));
+        assertTrue(!preview.getItemMeta().hasItemFlag(ItemFlag.HIDE_ENCHANTS));
+        assertEquals(Enchantment.SHARPNESS.displayName(3), barrier.getItemMeta().lore().get(0));
+        assertEquals(originalLore, barrier.getItemMeta().lore().get(1));
+        assertEquals(Component.empty(), barrier.getItemMeta().lore().get(2));
+        assertEquals("Recipe info", plain(barrier.getItemMeta().lore().get(3)));
+        assertEquals(Component.empty(), lines.get(1));
+        assertEquals("Recipe info", plain(lines.get(2)));
+        assertTrue(lines.stream().map(GuiUtilTest::plain).anyMatch("Shapeless Crafting"::equals));
+        assertTrue(lines.stream().map(GuiUtilTest::plain).anyMatch("Custom recipe"::equals));
+        assertTrue(lines.stream().map(GuiUtilTest::plain).anyMatch(line -> line.contains("Left-click edit")));
+    }
+
+    @Test
+    void recipePreviewWithoutLoreAndDisabledBarrierRetainRecipeInfo() {
+        ManagedRecipe recipe = new ManagedRecipe("disabled", RecipeKind.SHAPED);
+        recipe.setResult(new ItemStack(Material.DIAMOND));
+        recipe.setEnabled(false);
+        GuiManager manager = new GuiManager(null, null, null);
+
+        ItemStack normal = manager.recipeIcon(recipe, false, false);
+        ItemStack barrier = manager.recipeIcon(recipe, false, true);
+
+        assertEquals(Material.DIAMOND, normal.getType());
+        assertEquals(Material.BARRIER, barrier.getType());
+        assertEquals(normal.getItemMeta().lore(), barrier.getItemMeta().lore());
+        assertEquals("Recipe info", plain(barrier.getItemMeta().lore().getFirst()));
+        assertTrue(barrier.getItemMeta().lore().stream().map(GuiUtilTest::plain).anyMatch("Disabled - not craftable"::equals));
+        assertTrue(barrier.getItemMeta().lore().stream().map(GuiUtilTest::plain).anyMatch("Left-click view."::equals));
+        assertTrue(!normal.getItemMeta().hasItemFlag(ItemFlag.HIDE_ENCHANTS));
+    }
+
+    private static String plain(Component component) {
+        return PlainTextComponentSerializer.plainText().serialize(component);
+    }
     @Test
     void guiTextIsNotItalic() {
         ItemStack itemStack = GuiUtil.item(Material.PAPER, GuiUtil.Tone.SUCCESS, "Save Recipe", "Writes recipes.yml");

@@ -80,6 +80,17 @@ final class GuiUtil {
         return itemStack;
     }
 
+    static ItemStack namedCloneWithLore(ItemStack source, Component displayName, List<Component> lore) {
+        ItemStack itemStack = source == null || source.getType().isAir() ? new ItemStack(Material.BARRIER) : source.clone();
+        ItemMeta meta = itemStack.getItemMeta();
+        meta.displayName(nonItalicByDefault(displayName));
+        meta.lore(lore);
+        meta.addItemFlags(ItemFlag.values());
+        meta.removeItemFlags(ItemFlag.HIDE_ENCHANTS, ItemFlag.HIDE_STORED_ENCHANTS);
+        itemStack.setItemMeta(meta);
+        return itemStack;
+    }
+
     private static Component nonItalicByDefault(Component displayName) {
         if (displayName.decoration(TextDecoration.ITALIC) == TextDecoration.State.TRUE) {
             return displayName;

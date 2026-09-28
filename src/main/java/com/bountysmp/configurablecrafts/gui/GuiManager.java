@@ -21,6 +21,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -38,6 +40,7 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
+import org.bukkit.inventory.meta.EnchantmentStorageMeta;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
 
@@ -1188,23 +1191,43 @@ public final class GuiManager implements Listener {
         return null;
     }
 
-    private ItemStack recipeIcon(ManagedRecipe recipe, boolean admin, boolean blinkBarrier) {
-        List<String> lore = new ArrayList<>();
-        lore.add(recipe.kind().displayName());
-        lore.add(recipe.enabled() ? "Enabled" : "Disabled - not craftable");
-        lore.add(recipe.isOverride() ? "Overrides " + recipe.sourceKey() : "Custom recipe");
-        if (recipe.allowCrafters()) {
-            lore.add("Crafters allowed");
-        }
-        addLimitLore(lore, "Per-player", recipe.playerLimit());
-        addLimitLore(lore, "Global", recipe.globalLimit());
-        lore.add(admin ? "Left-click edit. Shift-right-click delete/revert." : "Left-click view.");
-        Component resultName = exactResultName(recipe.result());
-        if (!recipe.enabled() && blinkBarrier) {
-            return GuiUtil.namedClone(new ItemStack(Material.BARRIER), resultName, lore);
-        }
+    ItemStack recipeIcon(ManagedRecipe recipe, boolean admin, boolean blinkBarrier) {
         ItemStack result = recipe.result();
-        return GuiUtil.namedClone(result, resultName, lore);
+        List<Component> lore = new ArrayList<>();
+        boolean showBarrier = !recipe.enabled() && blinkBarrier;
+        if (showBarrier && result != null && result.getItemMeta() instanceof EnchantmentStorageMeta enchantments) {
+            enchantments.getStoredEnchants().entrySet().stream()
+                .sorted(Comparator.comparing(entry -> entry.getKey().getKey().toString()))
+                .map(entry -> entry.getKey().displayName(entry.getValue()))
+                .forEach(lore::add);
+        }
+        if (result != null && result.hasItemMeta() && result.getItemMeta().lore() != null) {
+            lore.addAll(result.getItemMeta().lore());
+        }
+        if (!lore.isEmpty()) {
+            lore.add(Component.empty());
+        }
+        lore.add(Component.text("Recipe info", NamedTextColor.AQUA).decorate(TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false));
+        lore.add(recipeInfoLine(recipe.kind().displayName()));
+        lore.add(recipeInfoLine(recipe.enabled() ? "Enabled" : "Disabled - not craftable"));
+        lore.add(recipeInfoLine(recipe.isOverride() ? "Overrides " + recipe.sourceKey() : "Custom recipe"));
+        if (recipe.allowCrafters()) {
+            lore.add(recipeInfoLine("Crafters allowed"));
+        }
+        List<String> limits = new ArrayList<>();
+        addLimitLore(limits, "Per-player", recipe.playerLimit());
+        addLimitLore(limits, "Global", recipe.globalLimit());
+        limits.forEach(line -> lore.add(recipeInfoLine(line)));
+        lore.add(recipeInfoLine(admin ? "Left-click edit. Shift-right-click delete/revert." : "Left-click view."));
+        Component resultName = exactResultName(result);
+        if (showBarrier) {
+            return GuiUtil.namedCloneWithLore(new ItemStack(Material.BARRIER), resultName, lore);
+        }
+        return GuiUtil.namedCloneWithLore(result, resultName, lore);
+    }
+
+    private Component recipeInfoLine(String line) {
+        return Component.text(line, NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false);
     }
 
     private Component exactResultName(ItemStack result) {
