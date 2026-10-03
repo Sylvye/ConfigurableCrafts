@@ -21,6 +21,7 @@ import org.bukkit.Keyed;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
+import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.BlastingRecipe;
 import org.bukkit.inventory.CampfireRecipe;
@@ -112,11 +113,15 @@ public final class ManagedRecipeRegistry {
     }
 
     public void shutdown() {
+        List<NamespacedKey> restoredSources = new ArrayList<>();
         for (ManagedRecipe recipe : new ArrayList<>(recipes.values())) {
             unregisterManaged(recipe);
-            restoreSource(recipe);
+            NamespacedKey restoredSource = restoreSource(recipe);
+            if (restoredSource != null) {
+                restoredSources.add(restoredSource);
+            }
         }
-        refreshPlayers();
+        refreshPlayers(restoredSources.toArray(NamespacedKey[]::new));
     }
 
     public Collection<ManagedRecipe> recipes() {
@@ -235,14 +240,15 @@ public final class ManagedRecipeRegistry {
 
     public void upsert(ManagedRecipe recipe) {
         ManagedRecipe previous = recipes.get(recipe.id());
+        NamespacedKey restoredSource = null;
         if (previous != null) {
             unregisterManaged(previous);
-            restoreSource(previous);
+            restoredSource = restoreSource(previous);
         }
         recipes.put(recipe.id(), recipe.copy());
         apply(recipe);
         save();
-        refreshPlayers();
+        refreshPlayers(restoredSource);
     }
 
     public void removeOrRevert(String id) {
@@ -251,9 +257,9 @@ public final class ManagedRecipeRegistry {
             return;
         }
         unregisterManaged(recipe);
-        restoreSource(recipe);
+        NamespacedKey restoredSource = restoreSource(recipe);
         save();
-        refreshPlayers();
+        refreshPlayers(restoredSource);
     }
 
     private void apply(ManagedRecipe recipe) {
@@ -262,7 +268,7 @@ public final class ManagedRecipeRegistry {
             if (recipe.sourceKey() != null) {
                 NamespacedKey sourceKey = NamespacedKey.fromString(recipe.sourceKey());
                 if (sourceKey != null) {
-                    Bukkit.removeRecipe(sourceKey, true);
+                    unregisterBukkitRecipe(sourceKey);
                 }
             }
             return;
@@ -286,26 +292,36 @@ public final class ManagedRecipeRegistry {
         if (recipe.sourceKey() != null) {
             NamespacedKey sourceKey = NamespacedKey.fromString(recipe.sourceKey());
             if (sourceKey != null) {
-                Bukkit.removeRecipe(sourceKey, true);
+                unregisterBukkitRecipe(sourceKey);
             }
         }
         Recipe bukkitRecipe = createBukkitRecipe(recipe);
-        if (bukkitRecipe != null) {
-            Bukkit.addRecipe(bukkitRecipe, true);
+        if (bukkitRecipe != null && Bukkit.addRecipe(bukkitRecipe, true)) {
             managedKeys.put(recipe.managedKey(plugin), recipe.id());
         }
     }
 
     private void unregisterManaged(ManagedRecipe recipe) {
         NamespacedKey key = recipe.managedKey(plugin);
-        Bukkit.removeRecipe(key, true);
+        unregisterBukkitRecipe(key);
         potionMixes.remove(key);
         if (VanillaBrewingCatalog.isOverride(recipe)) {
             for (Material material : potionContainers()) {
-                potionMixes.remove(potionMixKey(recipe, material));
+                NamespacedKey mixKey = potionMixKey(recipe, material);
+                potionMixes.remove(mixKey);
+                managedKeys.remove(mixKey);
             }
         }
         managedKeys.remove(key);
+    }
+
+    private void unregisterBukkitRecipe(NamespacedKey key) {
+        if (Bukkit.getRecipe(key) != null) {
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                player.undiscoverRecipe(key);
+            }
+        }
+        Bukkit.removeRecipe(key, true);
     }
 
     private void registerPotionMixes(ManagedRecipe recipe) {
@@ -348,16 +364,19 @@ public final class ManagedRecipeRegistry {
         return new NamespacedKey(plugin, "recipe/" + recipe.id() + "/" + material.name().toLowerCase(Locale.ROOT));
     }
 
-    private void restoreSource(ManagedRecipe recipe) {
+    private NamespacedKey restoreSource(ManagedRecipe recipe) {
         if (recipe.sourceKey() == null) {
-            return;
+            return null;
         }
         NamespacedKey key = NamespacedKey.fromString(recipe.sourceKey());
         Recipe original = key == null ? null : vanillaRecipes.get(key);
         if (original != null) {
-            Bukkit.removeRecipe(key, true);
-            Bukkit.addRecipe(original, true);
+            unregisterBukkitRecipe(key);
+            if (Bukkit.addRecipe(original, true)) {
+                return key;
+            }
         }
+        return null;
     }
 
     private Recipe createBukkitRecipe(ManagedRecipe recipe) {
@@ -702,8 +721,34 @@ public final class ManagedRecipeRegistry {
         return null;
     }
 
-    private void refreshPlayers() {
+    public void syncPlayerRecipes(Player player) {
+        List<NamespacedKey> keys = managedKeys.entrySet().stream()
+            .filter(entry -> {
+                ManagedRecipe recipe = recipes.get(entry.getValue());
+                return recipe != null && recipe.enabled() && recipe.kind().canonical() != RecipeKind.BREWING;
+            })
+            .map(Map.Entry::getKey)
+            .filter(key -> Bukkit.getRecipe(key) != null)
+            .toList();
+        if (!keys.isEmpty()) {
+            player.discoverRecipes(keys);
+        }
+    }
+
+    private void refreshPlayers(NamespacedKey... restoredSources) {
         Bukkit.updateRecipes();
+        List<NamespacedKey> restoredKeys = new ArrayList<>();
+        for (NamespacedKey key : restoredSources) {
+            if (key != null && Bukkit.getRecipe(key) != null) {
+                restoredKeys.add(key);
+            }
+        }
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            syncPlayerRecipes(player);
+            if (!restoredKeys.isEmpty()) {
+                player.discoverRecipes(restoredKeys);
+            }
+        }
     }
 
     private Bounds bounds(ManagedRecipe recipe) {

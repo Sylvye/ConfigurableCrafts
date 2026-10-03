@@ -6,6 +6,7 @@ import com.bountysmp.configurablecrafts.crafting.CookingRecipeListener;
 import com.bountysmp.configurablecrafts.crafting.CraftLimitTracker;
 import com.bountysmp.configurablecrafts.crafting.CraftingListener;
 import com.bountysmp.configurablecrafts.crafting.ManagedRecipeRegistry;
+import com.bountysmp.configurablecrafts.crafting.RecipeDiscoveryListener;
 import com.bountysmp.configurablecrafts.crafting.WorkstationUseListener;
 import com.bountysmp.configurablecrafts.gui.ChatPromptManager;
 import com.bountysmp.configurablecrafts.gui.GuiManager;
@@ -43,6 +44,7 @@ public final class ConfigurableCraftsPlugin extends JavaPlugin {
 
         getServer().getPluginManager().registerEvents(chatPromptManager, this);
         getServer().getPluginManager().registerEvents(guiManager, this);
+        getServer().getPluginManager().registerEvents(new RecipeDiscoveryListener(this, recipeRegistry), this);
         getServer().getPluginManager().registerEvents(new CraftingListener(this, recipeRegistry, craftLimitTracker), this);
         getServer().getPluginManager().registerEvents(new CookingRecipeListener(recipeRegistry, craftLimitTracker), this);
         getServer().getPluginManager().registerEvents(new WorkstationUseListener(recipeRegistry, craftLimitTracker), this);
