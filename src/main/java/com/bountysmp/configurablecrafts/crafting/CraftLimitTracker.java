@@ -22,6 +22,11 @@ public final class CraftLimitTracker {
     private final File file;
     private final LongSupplier clock;
     private final Map<String, UsageWindow> globalUsage = new HashMap<>();
+    public void resetPermanentGlobal(String id) {
+        UsageWindow previous = globalUsage.remove(id);
+        try { saveNow(); }
+        catch (RuntimeException ex) { if (previous != null) globalUsage.put(id, previous); throw ex; }
+    }
     private final Map<String, Map<UUID, UsageWindow>> playerUsage = new HashMap<>();
     private BukkitTask pendingSave;
 
@@ -41,7 +46,9 @@ public final class CraftLimitTracker {
         if (!file.exists()) {
             return;
         }
-        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
+        YamlConfiguration yaml = new YamlConfiguration();
+        try { yaml.load(file); }
+        catch (IOException | org.bukkit.configuration.InvalidConfigurationException ex) { throw new IllegalStateException("Cannot read permanent crafting history safely", ex); }
         readGlobal(yaml.getConfigurationSection("global"));
         readPlayers(yaml.getConfigurationSection("players"));
         cleanupExpired();
@@ -105,7 +112,12 @@ public final class CraftLimitTracker {
             changed = true;
         }
         if (changed) {
-            scheduleSave();
+            try { if (globalLimit.permanent() || playerLimit.permanent()) saveNow(); else scheduleSave(); }
+            catch (RuntimeException ex) {
+                if (globalLimit.enabled()) globalWindow.used -= crafts;
+                if (playerLimit.enabled() && playerWindow != null) playerWindow.used -= crafts;
+                throw ex;
+            }
         }
     }
 
@@ -113,6 +125,7 @@ public final class CraftLimitTracker {
         if (!limit.enabled() || window == null || window.used + crafts <= limit.crafts()) {
             return null;
         }
+        if (limit.permanent()) return "This recipe has reached its permanent " + label + " crafting limit.";
         long remaining = Math.max(1L, ((window.startedAtMillis + limit.windowSeconds() * 1000L) - now + 999L) / 1000L);
         return "This recipe has reached its " + label + " crafting limit. Try again in " + formatDuration(remaining) + ".";
     }
@@ -149,7 +162,10 @@ public final class CraftLimitTracker {
             }
         }
         try {
-            yaml.save(file);
+            java.nio.file.Path temp = file.toPath().resolveSibling(file.getName() + ".tmp");
+            yaml.save(temp.toFile());
+            try { java.nio.file.Files.move(temp, file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE); }
+            catch (java.nio.file.AtomicMoveNotSupportedException e) { java.nio.file.Files.move(temp, file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING); }
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to save " + file.getAbsolutePath(), exception);
         }
@@ -200,7 +216,7 @@ public final class CraftLimitTracker {
         int used = section.getInt("used", 0);
         long startedAtMillis = section.getLong("started-at-millis", 0L);
         long windowSeconds = section.getLong("window-seconds", 0L);
-        if (used <= 0 || startedAtMillis <= 0L || windowSeconds <= 0L) {
+        if (used <= 0 || startedAtMillis <= 0L || windowSeconds < 0L) {
             return null;
         }
         return new UsageWindow(used, startedAtMillis, windowSeconds);
@@ -217,7 +233,7 @@ public final class CraftLimitTracker {
             return null;
         }
         UsageWindow window = usage.get(key);
-        if (window == null || window.expired(now) || window.windowSeconds != limit.windowSeconds()) {
+        if (window == null || window.expired(now) || (window.windowSeconds != limit.windowSeconds() && window.windowSeconds != 0)) {
             window = new UsageWindow(0, now, limit.windowSeconds());
             usage.put(key, window);
         }
@@ -263,7 +279,7 @@ public final class CraftLimitTracker {
         }
 
         private boolean expired(long now) {
-            return now >= startedAtMillis + windowSeconds * 1000L;
+            return windowSeconds > 0 && now >= startedAtMillis + windowSeconds * 1000L;
         }
     }
 }

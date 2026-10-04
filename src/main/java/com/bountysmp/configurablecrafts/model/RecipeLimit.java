@@ -11,6 +11,8 @@ public final class RecipeLimit {
         set(crafts, windowSeconds);
     }
 
+    public boolean permanent() { return enabled() && windowSeconds == 0; }
+
     public int crafts() {
         return crafts;
     }
@@ -20,7 +22,7 @@ public final class RecipeLimit {
     }
 
     public boolean enabled() {
-        return crafts > 0 && windowSeconds > 0;
+        return crafts > 0 && windowSeconds >= 0;
     }
 
     public void set(int crafts, long windowSeconds) {

@@ -82,6 +82,9 @@ class CraftingListenerTest extends BukkitTest {
         recipe.setResult(new ItemStack(Material.CAKE));
         ItemStack[] matrix = new ItemStack[9];
         matrix[0] = new ItemStack(Material.MILK_BUCKET);
+        // MockBukkit does not expose native crafting remainders; use the equivalent component.
+        matrix[0].setData(io.papermc.paper.datacomponent.DataComponentTypes.USE_REMAINDER,
+            io.papermc.paper.datacomponent.item.UseRemainder.useRemainder(new ItemStack(Material.BUCKET)));
         Inventory inventory = Bukkit.createInventory(null, 9);
 
         assertEquals(0, CraftingListener.configuredRemainders(recipe, matrix, inventory, 1).size());

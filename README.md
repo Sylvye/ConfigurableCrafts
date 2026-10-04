@@ -13,8 +13,8 @@ ConfigurableCrafts is a Paper plugin for managing custom and overridden crafting
 
 ## Requirements
 
-- Java 21
-- Paper API `1.21.11`
+- Java 25
+- Paper 26.2 build 129 or newer compatible build
 - Gradle wrapper included in this repository
 
 ## Build
@@ -61,6 +61,12 @@ The built plugin jar is written to `build/libs/ConfigurableCrafts-0.1.0.jar`.
 ```
 
 On Windows, use `.\gradlew.bat test`.
+
+## Plugin-owned mythical recipes
+
+MythicItems registers six owned recipes through `registry().registerOwned(...)`. Ingredients, conditions, and enabled status remain editable in the existing GUI. Their output, shaped recipe type, permanent global allowance of one, and crafter exclusion are enforced by the owning plugin. Deleting an owned recipe disables it without deleting its crafting history.
+
+`openRecipe(player, id)` opens its editor directly. `OwnedCraftEvent` provides final cancellable validation before an owned output is created and its permanent allowance is persisted. The owner receives completion and abort callbacks. Existing timed crafting limits remain supported.
 
 ## GitHub
 

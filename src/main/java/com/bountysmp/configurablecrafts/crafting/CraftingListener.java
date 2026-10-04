@@ -59,6 +59,7 @@ public final class CraftingListener implements Listener {
         if (recipe == null || !(event.getWhoClicked() instanceof Player player) || !takesCraftResult(event)) {
             return;
         }
+        if (registry.owner(recipe.id()) != null) return;
         int craftCount = craftCount(event, recipe);
         limitTracker.consume(recipe, player.getUniqueId(), craftCount);
         List<RemainderPlacement> placements = configuredRemainders(recipe, event.getInventory().getMatrix(),
@@ -75,6 +76,47 @@ public final class CraftingListener implements Listener {
             event.setCancelled(true);
             event.setResult(null);
         }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onOwnedCraft(CraftItemEvent event) {
+        ManagedRecipe recipe = managedRecipe(event.getRecipe());
+        if (recipe == null || registry.owner(recipe.id()) == null) return;
+        event.setCancelled(true);
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        var policy = registry.owner(recipe.id());
+        String failure = policy.failure(player);
+        if (failure == null && !valid(recipe, player, event.getInventory().getMatrix())) failure = "This mythic cannot be crafted now.";
+        boolean shift = event.isShiftClick();
+        boolean pickup = event.getAction() == InventoryAction.PICKUP_ALL || event.getAction() == InventoryAction.PICKUP_HALF
+            || event.getAction() == InventoryAction.PICKUP_ONE || event.getAction() == InventoryAction.PICKUP_SOME;
+        if (!shift && (!pickup || (event.getCursor() != null && !event.getCursor().getType().isAir()))) failure = "Use an empty cursor or shift-click to craft.";
+        if (shift && java.util.Arrays.stream(player.getInventory().getStorageContents()).noneMatch(stack -> stack == null || stack.getType().isAir())) failure = "Make room in your inventory first.";
+        if (failure != null) { player.sendMessage(failure); return; }
+        var gate = new com.bountysmp.configurablecrafts.api.OwnedCraftEvent(player, recipe.id());
+        plugin.getServer().getPluginManager().callEvent(gate);
+        if (gate.isCancelled()) return;
+        ItemStack output = null;
+        try {
+            output = policy.create(player);
+            String limit = limitTracker.tryConsume(recipe, player.getUniqueId(), 1);
+            if (limit != null) { policy.aborted(player, output); player.sendMessage(limit); return; }
+        } catch (RuntimeException ex) { if (output != null) policy.aborted(player, output); plugin.getLogger().log(java.util.logging.Level.SEVERE, "Owned craft persistence failed", ex); return; }
+        ItemStack[] matrix = event.getInventory().getMatrix();
+        IngredientSpec[] matched = RecipePattern.matchingIngredients(recipe, matrix);
+        for (int i = 0; i < matrix.length; i++) if (matrix[i] != null && !matrix[i].getType().isAir()) {
+            ItemStack remainder = matched[i] != null && matched[i].remainder() != null ? matched[i].remainder() : nativeRemainder(matrix[i]);
+            if (matrix[i].getAmount() == 1) matrix[i] = remainder;
+            else {
+                matrix[i].subtract(1);
+                if (remainder != null) addToInventoryOrDrop(remainder, player);
+            }
+        }
+        event.getInventory().setMatrix(matrix);
+        event.getInventory().setResult(null);
+        if (shift) player.getInventory().addItem(output); else player.setItemOnCursor(output);
+        policy.completed(player, output);
+        plugin.getServer().getScheduler().runTask(plugin, player::updateInventory);
     }
 
     private void validateCraft(CraftItemEvent event) {
@@ -99,7 +141,7 @@ public final class CraftingListener implements Listener {
             player.sendMessage(conditionFailure == null ? "This recipe does not match the configured ingredients." : conditionFailure);
             return;
         }
-        int craftCount = craftCount(event, recipe);
+        int craftCount = registry.owner(recipe.id()) != null ? 1 : craftCount(event, recipe);
         String limitFailure = limitTracker.check(recipe, player.getUniqueId(), craftCount);
         if (limitFailure != null) {
             event.setCancelled(true);
@@ -109,7 +151,7 @@ public final class CraftingListener implements Listener {
     }
 
     private boolean valid(ManagedRecipe recipe, Player player, ItemStack[] matrix) {
-        return ConditionValidator.failureReason(recipe, player) == null && RecipePattern.matches(recipe, matrix);
+        return ConditionValidator.failureReason(recipe, player) == null && RecipePattern.matches(recipe, matrix) && limitTracker.check(recipe, player.getUniqueId(), 1) == null && (registry.owner(recipe.id()) == null || registry.owner(recipe.id()).failure(player) == null);
     }
 
     private ManagedRecipe managedRecipe(Recipe recipe) {

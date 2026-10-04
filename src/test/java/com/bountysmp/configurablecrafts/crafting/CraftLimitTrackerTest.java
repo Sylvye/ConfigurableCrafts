@@ -74,6 +74,21 @@ class CraftLimitTrackerTest extends BukkitTest {
         return new CraftLimitTracker(null, new File(tempDir, "limit-usage.yml"), now::get);
     }
 
+    @Test
+    void deliberatePermanentResetIsDurableAndLeavesOtherRecipesExhausted() {
+        File file=new File(tempDir,"permanent.yml");
+        var tracker=new CraftLimitTracker(null,file,()->1000L);
+        var first=new ManagedRecipe("first",RecipeKind.SHAPED);
+        var other=new ManagedRecipe("other",RecipeKind.SHAPED);
+        first.globalLimit().set(1,0); other.globalLimit().set(1,0);
+        assertNull(tracker.tryConsume(first,UUID.randomUUID(),1));
+        assertNull(tracker.tryConsume(other,UUID.randomUUID(),1));
+        tracker.resetPermanentGlobal("first");
+        var restored=new CraftLimitTracker(null,file,()->1000L); restored.load();
+        assertNull(restored.check(first,UUID.randomUUID(),1));
+        assertNotNull(restored.check(other,UUID.randomUUID(),1));
+    }
+
     private ManagedRecipe recipe() {
         return new ManagedRecipe("limited", RecipeKind.SHAPED);
     }

@@ -16,13 +16,20 @@ import java.util.Objects;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
-public final class ConfigurableCraftsPlugin extends JavaPlugin {
+public class ConfigurableCraftsPlugin extends JavaPlugin {
     private RecipeRepository repository;
     private ManagedRecipeRegistry recipeRegistry;
     private CraftLimitTracker craftLimitTracker;
     private BrewingRecipeService brewingRecipeService;
     private ChatPromptManager chatPromptManager;
     private GuiManager guiManager;
+
+    public ManagedRecipeRegistry registry() { return recipeRegistry; }
+    public void resetOwnedAllowance(String id, com.bountysmp.configurablecrafts.api.OwnedRecipe owner) {
+        if (recipeRegistry.owner(id) != owner || owner == null) throw new IllegalArgumentException("Recipe owner mismatch");
+        craftLimitTracker.resetPermanentGlobal(id);
+    }
+    public void openRecipe(org.bukkit.entity.Player player, String id) { guiManager.openRecipe(player, id); }
 
     @Override
     public void onEnable() {

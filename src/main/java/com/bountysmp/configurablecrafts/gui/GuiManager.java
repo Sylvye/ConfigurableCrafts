@@ -842,6 +842,11 @@ public final class GuiManager implements Listener {
         openMenus.put(player.getUniqueId(), new OpenMenu(Screen.CONFIRM_REMOVE, 0, "", recipeId, null, inventory));
     }
 
+    public void openRecipe(Player player, String id) {
+        ManagedRecipe recipe = registry.byId(id);
+        if (recipe != null) openEditor(player, new EditorSession(recipe.copy(), !isAdmin(player)));
+    }
+
     private void openEditor(Player player, EditorSession session) {
         editorSessions.put(player.getUniqueId(), session);
         Inventory inventory = Bukkit.createInventory(player, 54, session.readOnly() ? "View Recipe" : "Edit Recipe");
@@ -1284,7 +1289,7 @@ public final class GuiManager implements Listener {
     }
 
     private String limitDescription(RecipeLimit limit) {
-        return limit.enabled() ? limit.crafts() + " crafts per " + formatDuration(limit.windowSeconds()) : "No limit.";
+        return limit.permanent() ? limit.crafts() + " crafts, permanently" : limit.enabled() ? limit.crafts() + " crafts per " + formatDuration(limit.windowSeconds()) : "No limit.";
     }
 
     private static int recipeKindRank(ManagedRecipe recipe) {

@@ -37,6 +37,29 @@ import org.bukkit.inventory.StonecuttingRecipe;
 import org.bukkit.plugin.Plugin;
 
 public final class ManagedRecipeRegistry {
+    private final java.util.Map<String, com.bountysmp.configurablecrafts.api.OwnedRecipe> owned = new java.util.HashMap<>();
+    public com.bountysmp.configurablecrafts.api.OwnedRecipe owner(String id) { return owned.get(id); }
+    /** Refresh presentation only; ingredient registration and discovery remain untouched. */
+    public void refreshOwnedPreview(String id, com.bountysmp.configurablecrafts.api.OwnedRecipe policy) {
+        if (owner(id) != policy) throw new IllegalArgumentException("Recipe owner mismatch");
+        ManagedRecipe recipe = byId(id);
+        if (recipe != null) recipe.setResult(policy.preview());
+    }
+    public void registerOwned(ManagedRecipe defaults, com.bountysmp.configurablecrafts.api.OwnedRecipe policy) {
+        owned.put(defaults.id(), policy);
+        ManagedRecipe recipe = byId(defaults.id());
+        upsert(recipe == null ? defaults : recipe);
+    }
+    private void enforceOwned(ManagedRecipe recipe) {
+        var policy = owner(recipe.id());
+        if (policy == null) return;
+        recipe.setKind(com.bountysmp.configurablecrafts.model.RecipeKind.SHAPED);
+        recipe.setSourceKey(null);
+        recipe.setResult(policy.preview());
+        recipe.setAllowCrafters(false);
+        recipe.setGlobalLimit(new com.bountysmp.configurablecrafts.model.RecipeLimit(1, 0));
+    }
+
     public static final String CRAFTER_BYPASS_WARNING = "Warning: crafters bypass crafting conditions and limits. Only enable them on recipes without dimension, weather, XP, biome, per-player limit, or global limit requirements.";
     private static final char[] INGREDIENT_KEYS = "ABCDEFGHI".toCharArray();
     private static final Set<Material> VANILLA_BREWING_INGREDIENTS = Set.of(
@@ -193,6 +216,11 @@ public final class ManagedRecipeRegistry {
     }
 
     public String validateForSave(ManagedRecipe recipe) {
+        for (var entry : owned.entrySet()) {
+            if (!entry.getKey().equals(recipe.id()) && entry.getValue().matches(recipe.result()))
+                return "That output belongs to another plugin's permanent recipe.";
+        }
+        enforceOwned(recipe);
         if (!recipe.kind().isSupported()) {
             return "That recipe type is not editable yet.";
         }
@@ -239,6 +267,7 @@ public final class ManagedRecipeRegistry {
     }
 
     public void upsert(ManagedRecipe recipe) {
+        enforceOwned(recipe);
         ManagedRecipe previous = recipes.get(recipe.id());
         NamespacedKey restoredSource = null;
         if (previous != null) {
@@ -252,6 +281,11 @@ public final class ManagedRecipeRegistry {
     }
 
     public void removeOrRevert(String id) {
+        if (owner(id) != null) {
+            ManagedRecipe existing = byId(id);
+            if (existing != null) { existing.setEnabled(false); upsert(existing); }
+            return;
+        }
         ManagedRecipe recipe = recipes.remove(id);
         if (recipe == null) {
             return;

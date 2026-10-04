@@ -20,9 +20,24 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.junit.jupiter.api.Test;
 
 class GuiUtilTest extends BukkitTest {
+    /** Supply Paper's effective name at the mock boundary; test the GUI's actual cloning/lore. */
+    private static final class NamedStack extends ItemStack {
+        NamedStack(Material material) { super(material); }
+        NamedStack(ItemStack source) {
+            super(source.getType(), source.getAmount());
+            setItemMeta(source.getItemMeta());
+        }
+        @Override public Component effectiveName() {
+            var meta = getItemMeta();
+            if (meta.hasDisplayName()) return meta.displayName();
+            if (meta.hasItemName()) return meta.itemName();
+            return Component.translatable(getType().translationKey());
+        }
+        @Override public NamedStack clone() { return new NamedStack(this); }
+    }
     @Test
     void recipePreviewPreservesEnchantedBookLoreAboveRecipeInfo() {
-        ItemStack book = new ItemStack(Material.ENCHANTED_BOOK);
+        ItemStack book = new NamedStack(Material.ENCHANTED_BOOK);
         Component originalLore = Component.text("A rare enchantment", NamedTextColor.GOLD)
             .decorate(TextDecoration.BOLD);
         EnchantmentStorageMeta meta = (EnchantmentStorageMeta) book.getItemMeta();
@@ -55,7 +70,7 @@ class GuiUtilTest extends BukkitTest {
     @Test
     void recipePreviewWithoutLoreAndDisabledBarrierRetainRecipeInfo() {
         ManagedRecipe recipe = new ManagedRecipe("disabled", RecipeKind.SHAPED);
-        recipe.setResult(new ItemStack(Material.DIAMOND));
+        recipe.setResult(new NamedStack(Material.DIAMOND));
         recipe.setEnabled(false);
         GuiManager manager = new GuiManager(null, null, null);
 
@@ -84,7 +99,7 @@ class GuiUtilTest extends BukkitTest {
 
     @Test
     void namedCloneCanPreserveExactComponentName() {
-        ItemStack source = new ItemStack(Material.DIAMOND_SWORD);
+        ItemStack source = new NamedStack(Material.DIAMOND_SWORD);
         Component heldName = Component.text("Royal Blade", NamedTextColor.GOLD)
             .decorate(TextDecoration.BOLD)
             .decoration(TextDecoration.ITALIC, false);
