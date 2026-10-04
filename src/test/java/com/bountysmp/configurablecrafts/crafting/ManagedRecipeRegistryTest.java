@@ -2,6 +2,8 @@ package com.bountysmp.configurablecrafts.crafting;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.bountysmp.configurablecrafts.BukkitTest;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
@@ -13,9 +15,13 @@ import io.papermc.paper.potion.PotionMix;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.RecipeChoice;
+import org.bukkit.inventory.ShapedRecipe;
+import org.bukkit.inventory.ShapelessRecipe;
 import org.bukkit.inventory.meta.PotionMeta;
 import org.bukkit.potion.PotionType;
 import org.junit.jupiter.api.Test;
@@ -25,6 +31,42 @@ import org.mockbukkit.mockbukkit.MockBukkit;
 class ManagedRecipeRegistryTest extends BukkitTest {
     @TempDir
     File tempDir;
+
+    @Test
+    void importingExactRecipesPreservesItemMetadataAndSignatures() {
+        ManagedRecipeRegistry registry = registry();
+        ItemStack input = potion(PotionType.INVISIBILITY);
+        ShapedRecipe shaped = new ShapedRecipe(NamespacedKey.minecraft("exact_shaped"), new ItemStack(Material.DIAMOND));
+        shaped.shape("A");
+        shaped.setIngredient('A', new RecipeChoice.ExactChoice(input));
+        ShapelessRecipe shapeless = new ShapelessRecipe(NamespacedKey.minecraft("exact_shapeless"), new ItemStack(Material.DIAMOND));
+        shapeless.addIngredient(new RecipeChoice.ExactChoice(input));
+
+        for (org.bukkit.inventory.Recipe original : List.of(shaped, shapeless)) {
+            ManagedRecipe imported = registry.fromVanilla(original);
+            assertTrue(IngredientMatcher.matches(imported.ingredient(0), input));
+            assertFalse(IngredientMatcher.matches(imported.ingredient(0), new ItemStack(Material.POTION)));
+            assertEquals(RecipePattern.signature(original), RecipePattern.signature(imported));
+        }
+    }
+
+    @Test
+    void exactSignaturesDetectConflictsWithRegisteredRecipes() {
+        ManagedRecipeRegistry registry = registry();
+        ItemStack input = potion(PotionType.INVISIBILITY);
+        ShapelessRecipe original = new ShapelessRecipe(NamespacedKey.minecraft("exact_conflict"), new ItemStack(Material.DIAMOND));
+        original.addIngredient(new RecipeChoice.ExactChoice(input));
+        Bukkit.addRecipe(original);
+        registry.cacheVanillaRecipes();
+        ManagedRecipe duplicate = new ManagedRecipe("duplicate", RecipeKind.SHAPELESS);
+        duplicate.setResult(new ItemStack(Material.EMERALD));
+        duplicate.setIngredient(0, IngredientSpec.fromExactSample(input));
+
+        assertEquals("This recipe collides with vanilla recipe minecraft:exact_conflict. Edit that recipe instead.",
+            registry.validateForSave(duplicate));
+        duplicate.setIngredient(0, IngredientSpec.fromExactSample(potion(PotionType.NIGHT_VISION)));
+        assertNull(registry.validateForSave(duplicate));
+    }
 
     @Test
     void validateForSaveRejectsUnknownDimensions() {

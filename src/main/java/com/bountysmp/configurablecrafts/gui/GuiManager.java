@@ -1113,7 +1113,7 @@ public final class GuiManager implements Listener {
             return spec == null ? new IngredientSpec() : spec.copy();
         }
         if (spec == null || spec.isTagOnly()) {
-            spec = IngredientSpec.fromSample(item);
+            spec = IngredientSpec.fromExactSample(item);
             session.recipe().setIngredient(selected, spec);
         }
         return spec;

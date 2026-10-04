@@ -20,7 +20,10 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
+import org.bukkit.inventory.RecipeChoice;
+import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.inventory.ShapelessRecipe;
+import net.kyori.adventure.text.Component;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +70,38 @@ class RecipeDiscoveryTest {
         server.getScheduler().performOneTick();
 
         assertEquals(Set.of(key(first), key(second)), player.getDiscoveredRecipes());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = RecipeKind.class, names = {"SHAPED", "SHAPELESS"})
+    void customItemRecipesKeepExactSignaturesAfterReloadAndDiscoverWithoutBaseItems(RecipeKind kind) {
+        ItemStack prism = new ItemStack(Material.AMETHYST_SHARD);
+        prism.editMeta(meta -> {
+            meta.displayName(Component.text("Onyx Prism"));
+            meta.lore(List.of(Component.text("A dark crystal.")));
+        });
+        ManagedRecipe managed = recipe("onyx_recipe", kind);
+        managed.setIngredient(0, IngredientSpec.fromExactSample(prism));
+        registry.upsert(managed);
+        registry.load();
+        registry.applyAll();
+
+        PlayerMock player = server.addPlayer();
+        server.getScheduler().performOneTick();
+        assertTrue(player.getDiscoveredRecipes().contains(key(managed)));
+        player.getInventory().addItem(prism);
+        assertFalse(player.getInventory().containsAtLeast(new ItemStack(prism.getType()), 1));
+
+        ManagedRecipe loaded = registry.byId(managed.id());
+        Recipe registered = Bukkit.getRecipe(key(managed));
+        assertEquals(RecipePattern.signature(loaded), RecipePattern.signature(registered));
+        RecipeChoice choice = registered instanceof ShapedRecipe shaped
+            ? shaped.getChoiceMap().get('A') : ((ShapelessRecipe) registered).getChoiceList().getFirst();
+        assertTrue(choice.test(prism));
+        assertFalse(choice.test(new ItemStack(prism.getType())));
+        assertTrue(RecipePattern.matches(loaded, new ItemStack[] {prism, null, null, null}));
+        assertFalse(RecipePattern.matches(loaded,
+            new ItemStack[] {new ItemStack(prism.getType()), null, null, null}));
     }
 
     @Test

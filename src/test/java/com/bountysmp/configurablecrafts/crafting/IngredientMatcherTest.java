@@ -9,12 +9,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.bountysmp.configurablecrafts.BukkitTest;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
 import com.bountysmp.configurablecrafts.model.MatcherType;
+import java.util.List;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Tag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.RecipeChoice;
 import org.bukkit.inventory.meta.PotionMeta;
+import org.bukkit.persistence.PersistentDataType;
+import net.kyori.adventure.text.Component;
 import org.bukkit.potion.PotionType;
 import org.junit.jupiter.api.Test;
 import org.mockbukkit.mockbukkit.MockBukkit;
@@ -107,6 +110,39 @@ class IngredientMatcherTest extends BukkitTest {
         RecipeChoice.ExactChoice nightVision = new RecipeChoice.ExactChoice(potion(PotionType.NIGHT_VISION, 1));
 
         assertNotEquals(IngredientMatcher.tokenForChoice(invisibility), IngredientMatcher.tokenForChoice(nightVision));
+    }
+
+    @Test
+    void exactCustomItemSignatureMatchesRegisteredChoiceAndRejectsBaseMaterial() {
+        ItemStack prism = new ItemStack(Material.AMETHYST_SHARD, 16);
+        NamespacedKey identity = new NamespacedKey("testitems", "type");
+        prism.editMeta(meta -> {
+            meta.displayName(Component.text("Onyx Prism"));
+            meta.lore(List.of(Component.text("A dark crystal.")));
+            meta.getPersistentDataContainer().set(identity, PersistentDataType.STRING, "onyx_prism");
+        });
+        IngredientSpec spec = IngredientSpec.fromExactSample(prism);
+        RecipeChoice choice = IngredientMatcher.toRecipeChoice(spec);
+        ItemStack stack = prism.clone();
+        stack.setAmount(64);
+        ItemStack impostor = prism.clone();
+        impostor.editMeta(meta -> meta.getPersistentDataContainer().set(identity, PersistentDataType.STRING, "other_item"));
+
+        assertInstanceOf(RecipeChoice.ExactChoice.class, choice);
+        assertEquals(IngredientMatcher.signatureToken(spec), IngredientMatcher.tokenForChoice(choice));
+        assertTrue(choice.test(stack));
+        assertTrue(IngredientMatcher.matches(spec, stack));
+        assertFalse(choice.test(new ItemStack(prism.getType())));
+        assertFalse(IngredientMatcher.matches(spec, new ItemStack(prism.getType())));
+        assertFalse(choice.test(impostor));
+        assertFalse(IngredientMatcher.matches(spec, impostor));
+        assertNotEquals(IngredientMatcher.signatureToken(spec),
+            IngredientMatcher.signatureToken(IngredientSpec.fromExactSample(impostor)));
+        ItemStack differentLore = prism.clone();
+        differentLore.editMeta(meta -> meta.lore(List.of(Component.text("A different crystal."))));
+        assertFalse(choice.test(differentLore));
+        assertNotEquals(IngredientMatcher.signatureToken(spec),
+            IngredientMatcher.signatureToken(IngredientSpec.fromExactSample(differentLore)));
     }
 
     private ItemStack potion(PotionType potionType, int amount) {

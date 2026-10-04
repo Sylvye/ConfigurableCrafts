@@ -176,6 +176,10 @@ public final class IngredientMatcher {
             return "materials:" + materials.stream().map(Enum::name).sorted().toList();
         }
         if (choice instanceof RecipeChoice.ExactChoice exactChoice) {
+            // A single registered choice must have the same token as its ingredient spec.
+            if (exactChoice.getChoices().size() == 1) {
+                return "exact:" + exactFingerprint(exactChoice.getChoices().getFirst());
+            }
             return "exact:" + exactChoice.getChoices().stream()
                 .map(IngredientMatcher::exactFingerprint)
                 .sorted()

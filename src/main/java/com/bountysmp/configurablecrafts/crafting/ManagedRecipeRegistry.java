@@ -746,7 +746,7 @@ public final class ManagedRecipeRegistry {
 
     private IngredientSpec specFromChoice(RecipeChoice choice) {
         if (choice instanceof RecipeChoice.ExactChoice exactChoice && !exactChoice.getChoices().isEmpty()) {
-            return IngredientSpec.fromSample(exactChoice.getChoices().getFirst());
+            return IngredientSpec.fromExactSample(exactChoice.getChoices().getFirst());
         }
         if (choice instanceof RecipeChoice.MaterialChoice materialChoice && !materialChoice.getChoices().isEmpty()) {
             Material material = materialChoice.getChoices().getFirst();
