@@ -1,5 +1,5 @@
 name: ConfigurableCrafts
-version: 0.2.0
+version: 0.2.1
 main: com.bountysmp.configurablecrafts.ConfigurableCraftsPlugin
 api-version: '26.2'
 author: Sylvye

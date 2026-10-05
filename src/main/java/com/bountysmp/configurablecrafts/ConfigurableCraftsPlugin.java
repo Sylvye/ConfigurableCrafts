@@ -23,11 +23,13 @@ public class ConfigurableCraftsPlugin extends JavaPlugin {
     private BrewingRecipeService brewingRecipeService;
     private ChatPromptManager chatPromptManager;
     private GuiManager guiManager;
+    private boolean availabilityRefreshQueued;
 
     public ManagedRecipeRegistry registry() { return recipeRegistry; }
     public void resetOwnedAllowance(String id, com.bountysmp.configurablecrafts.api.OwnedRecipe owner) {
         if (recipeRegistry.owner(id) != owner || owner == null) throw new IllegalArgumentException("Recipe owner mismatch");
         craftLimitTracker.resetPermanentGlobal(id);
+        recipeRegistry.refreshAvailability();
     }
     public void openRecipe(org.bukkit.entity.Player player, String id) { guiManager.openRecipe(player, id); }
 
@@ -41,6 +43,15 @@ public class ConfigurableCraftsPlugin extends JavaPlugin {
         this.guiManager = new GuiManager(this, recipeRegistry, chatPromptManager);
 
         craftLimitTracker.load();
+        recipeRegistry.allowance(craftLimitTracker::globallyAvailable);
+        craftLimitTracker.onChange(() -> {
+            if (availabilityRefreshQueued) return;
+            availabilityRefreshQueued = true;
+            getServer().getScheduler().runTask(this, () -> {
+                availabilityRefreshQueued = false;
+                recipeRegistry.refreshAvailability();
+            });
+        });
         recipeRegistry.cacheVanillaRecipes();
         recipeRegistry.load();
         recipeRegistry.applyAll();
@@ -57,6 +68,7 @@ public class ConfigurableCraftsPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new WorkstationUseListener(recipeRegistry, craftLimitTracker), this);
         getServer().getPluginManager().registerEvents(brewingRecipeService, this);
         guiManager.startBlinkTask();
+        getServer().getScheduler().runTaskTimer(this, recipeRegistry::refreshAvailability, 20, 20);
     }
 
     @Override

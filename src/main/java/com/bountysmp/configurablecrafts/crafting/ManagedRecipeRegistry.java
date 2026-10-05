@@ -88,6 +88,31 @@ public final class ManagedRecipeRegistry {
     private final Map<String, ManagedRecipe> recipes = new LinkedHashMap<>();
     private final Map<NamespacedKey, Recipe> vanillaRecipes = new LinkedHashMap<>();
     private final Map<NamespacedKey, String> managedKeys = new HashMap<>();
+    private final Set<String> exhausted = new java.util.HashSet<>();
+    private java.util.function.Predicate<ManagedRecipe> allowance = recipe -> true;
+
+    public void allowance(java.util.function.Predicate<ManagedRecipe> predicate) {
+        allowance = java.util.Objects.requireNonNull(predicate);
+    }
+
+    private boolean available(ManagedRecipe recipe) {
+        var policy = owner(recipe.id());
+        return allowance.test(recipe) && (policy == null || policy.available());
+    }
+
+    /** Remove exhausted registrations, retaining edits and enabled state for a later reset. */
+    public void refreshAvailability() {
+        boolean changed = false;
+        for (ManagedRecipe recipe : recipes.values()) {
+            if (!recipe.enabled()) continue;
+            boolean unavailable = !available(recipe);
+            if (unavailable != exhausted.contains(recipe.id())) {
+                apply(recipe);
+                changed = true;
+            }
+        }
+        if (changed) refreshPlayers();
+    }
 
     public ManagedRecipeRegistry(Plugin plugin, RecipeRepository repository) {
         this(plugin, repository, new BukkitPotionMixes());
@@ -119,6 +144,7 @@ public final class ManagedRecipeRegistry {
 
     public void load() {
         recipes.clear();
+        exhausted.clear();
         for (ManagedRecipe recipe : repository.load()) {
             recipes.put(recipe.id(), recipe);
         }
@@ -287,6 +313,7 @@ public final class ManagedRecipeRegistry {
             return;
         }
         ManagedRecipe recipe = recipes.remove(id);
+        exhausted.remove(id);
         if (recipe == null) {
             return;
         }
@@ -298,12 +325,23 @@ public final class ManagedRecipeRegistry {
 
     private void apply(ManagedRecipe recipe) {
         unregisterManaged(recipe);
+        exhausted.remove(recipe.id());
         if (!recipe.enabled()) {
             if (recipe.sourceKey() != null) {
                 NamespacedKey sourceKey = NamespacedKey.fromString(recipe.sourceKey());
                 if (sourceKey != null) {
                     unregisterBukkitRecipe(sourceKey);
                 }
+            }
+            return;
+        }
+        if (!available(recipe)) {
+            exhausted.add(recipe.id());
+            // Cached craft events must still reach limit validation after unregistration.
+            managedKeys.put(recipe.managedKey(plugin), recipe.id());
+            if (recipe.sourceKey() != null) {
+                NamespacedKey sourceKey = NamespacedKey.fromString(recipe.sourceKey());
+                if (sourceKey != null) unregisterBukkitRecipe(sourceKey);
             }
             return;
         }

@@ -7,6 +7,8 @@ import org.bukkit.inventory.ItemStack;
 public interface OwnedRecipe {
     boolean matches(ItemStack result);
     ItemStack preview();
+    /** Whether the output remains globally obtainable; separate from per-player validation. */
+    default boolean available() { return true; }
     /** Null means permitted. Must not change game state. */
     String failure(Player player);
     /** Create and durably record a unique result, before taking ingredients. */

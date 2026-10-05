@@ -26,9 +26,19 @@ public final class CraftLimitTracker {
         UsageWindow previous = globalUsage.remove(id);
         try { saveNow(); }
         catch (RuntimeException ex) { if (previous != null) globalUsage.put(id, previous); throw ex; }
+        changed.run();
     }
     private final Map<String, Map<UUID, UsageWindow>> playerUsage = new HashMap<>();
     private BukkitTask pendingSave;
+    private Runnable changed = () -> {};
+
+    public void onChange(Runnable callback) { changed = java.util.Objects.requireNonNull(callback); }
+
+    public boolean globallyAvailable(ManagedRecipe recipe) {
+        RecipeLimit limit = recipe.globalLimit();
+        UsageWindow usage = window(globalUsage, recipe.id(), limit, clock.getAsLong());
+        return usage == null || usage.used < limit.crafts();
+    }
 
     public CraftLimitTracker(Plugin plugin, File file) {
         this(plugin, file, System::currentTimeMillis);
@@ -118,6 +128,7 @@ public final class CraftLimitTracker {
                 if (playerLimit.enabled() && playerWindow != null) playerWindow.used -= crafts;
                 throw ex;
             }
+            this.changed.run();
         }
     }
 

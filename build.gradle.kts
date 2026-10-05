@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "com.bountysmp"
-version = "0.2.0"
+version = "0.2.1"
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:26.2.build.129-stable")
