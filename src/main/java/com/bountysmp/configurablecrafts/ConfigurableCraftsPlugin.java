@@ -31,6 +31,15 @@ public class ConfigurableCraftsPlugin extends JavaPlugin {
         craftLimitTracker.resetPermanentGlobal(id);
         recipeRegistry.refreshAvailability();
     }
+    /** Claims one registered owner's allowance, durably for permanent limits. Null means success. */
+    public String consumeOwnedAllowance(String id, com.bountysmp.configurablecrafts.api.OwnedRecipe owner,
+                                       java.util.UUID playerId) {
+        if (owner == null || recipeRegistry.owner(id) != owner)
+            throw new IllegalArgumentException("Recipe owner mismatch");
+        var recipe = recipeRegistry.byId(id);
+        if (recipe == null) throw new IllegalArgumentException("Unknown owned recipe");
+        return craftLimitTracker.tryConsume(recipe, playerId, 1);
+    }
     public void openRecipe(org.bukkit.entity.Player player, String id) { guiManager.openRecipe(player, id); }
 
     @Override

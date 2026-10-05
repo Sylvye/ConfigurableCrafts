@@ -66,6 +66,8 @@ On Windows, use `.\gradlew.bat test`.
 
 MythicItems registers six owned recipes through `registry().registerOwned(...)`. Ingredients, conditions, and enabled status remain editable in the existing GUI. Their output, shaped recipe type, permanent global allowance of one, and crafter exclusion are enforced by the owning plugin. Deleting an owned recipe disables it without deleting its crafting history.
 
+`consumeOwnedAllowance(id, owner, playerId)` claims one crafting allowance only for the currently registered owner. It returns `null` on success or the limit denial message; owner mismatches throw. Permanent allowance writes complete before success is returned, and failed writes roll back the counter. Command grants must commit their own identity/custody before delivering an item. `resetOwnedAllowance(id, owner)` restores the permanent global allowance during owner-controlled recovery.
+
 `openRecipe(player, id)` opens its editor directly. `OwnedCraftEvent` provides final cancellable validation before an owned output is created and its permanent allowance is persisted. The owner receives completion and abort callbacks. Existing timed crafting limits remain supported.
 
 ## GitHub
