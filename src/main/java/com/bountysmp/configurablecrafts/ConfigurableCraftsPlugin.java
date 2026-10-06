@@ -49,7 +49,7 @@ public class ConfigurableCraftsPlugin extends JavaPlugin {
         this.craftLimitTracker = new CraftLimitTracker(this, new File(getDataFolder(), "limit-usage.yml"));
         this.brewingRecipeService = new BrewingRecipeService(recipeRegistry);
         this.chatPromptManager = new ChatPromptManager(this);
-        this.guiManager = new GuiManager(this, recipeRegistry, chatPromptManager);
+        this.guiManager = new GuiManager(this, recipeRegistry, chatPromptManager, craftLimitTracker);
 
         craftLimitTracker.load();
         recipeRegistry.allowance(craftLimitTracker::globallyAvailable);

@@ -86,6 +86,23 @@ class GuiUtilTest extends BukkitTest {
         assertTrue(!normal.getItemMeta().hasItemFlag(ItemFlag.HIDE_ENCHANTS));
     }
 
+    @Test
+    void temporarilyUnavailableRecipeFlashesAndReturnsToNormalWhenAvailable() {
+        ManagedRecipe recipe = new ManagedRecipe("limited", RecipeKind.SHAPED);
+        recipe.setResult(new NamedStack(Material.DIAMOND));
+        GuiManager manager = new GuiManager(null, null, null);
+        String failure = "This recipe requires rain.";
+
+        ItemStack normal = manager.recipeIcon(recipe, false, false, failure);
+        ItemStack barrier = manager.recipeIcon(recipe, false, true, failure);
+        assertEquals(Material.DIAMOND, normal.getType());
+        assertEquals(Material.BARRIER, barrier.getType());
+        assertEquals(normal.getItemMeta().displayName(), barrier.getItemMeta().displayName());
+        assertEquals(normal.getItemMeta().lore(), barrier.getItemMeta().lore());
+        assertTrue(barrier.getItemMeta().lore().stream().map(GuiUtilTest::plain).anyMatch(failure::equals));
+        assertEquals(Material.DIAMOND, manager.recipeIcon(recipe, false, true, null).getType());
+    }
+
     private static String plain(Component component) {
         return PlainTextComponentSerializer.plainText().serialize(component);
     }

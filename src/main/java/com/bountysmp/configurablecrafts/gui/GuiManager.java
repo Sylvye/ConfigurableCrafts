@@ -1,6 +1,8 @@
 package com.bountysmp.configurablecrafts.gui;
 
 import com.bountysmp.configurablecrafts.crafting.IngredientMatcher;
+import com.bountysmp.configurablecrafts.crafting.ConditionValidator;
+import com.bountysmp.configurablecrafts.crafting.CraftLimitTracker;
 import com.bountysmp.configurablecrafts.crafting.ManagedRecipeRegistry;
 import com.bountysmp.configurablecrafts.crafting.VanillaBrewingCatalog;
 import com.bountysmp.configurablecrafts.model.IngredientSpec;
@@ -75,12 +77,18 @@ public final class GuiManager implements Listener {
     private final Plugin plugin;
     private final ManagedRecipeRegistry registry;
     private final ChatPromptManager prompts;
+    private final CraftLimitTracker limitTracker;
     private final Map<UUID, OpenMenu> openMenus = new ConcurrentHashMap<>();
     private final Map<UUID, EditorSession> editorSessions = new ConcurrentHashMap<>();
     private BukkitTask blinkTask;
     private boolean disabledBlink;
 
     public GuiManager(Plugin plugin, ManagedRecipeRegistry registry, ChatPromptManager prompts) {
+        this(plugin, registry, prompts, null);
+    }
+
+    public GuiManager(Plugin plugin, ManagedRecipeRegistry registry, ChatPromptManager prompts, CraftLimitTracker limitTracker) {
+        this.limitTracker = limitTracker;
         this.plugin = plugin;
         this.registry = registry;
         this.prompts = prompts;
@@ -113,7 +121,7 @@ public final class GuiManager implements Listener {
                 break;
             }
             ManagedRecipe recipe = recipes.get(index);
-            inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink));
+            inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink, craftingFailure(recipe, player)));
         }
         inventory.setItem(45, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Previous Page", "Page " + (safePage + 1) + " / " + (maxPage + 1)));
         inventory.setItem(49, GuiUtil.item(Material.PAPER, GuiUtil.Tone.NEUTRAL, "Page " + (safePage + 1) + " / " + (maxPage + 1)));
@@ -1197,9 +1205,13 @@ public final class GuiManager implements Listener {
     }
 
     ItemStack recipeIcon(ManagedRecipe recipe, boolean admin, boolean blinkBarrier) {
+        return recipeIcon(recipe, admin, blinkBarrier, null);
+    }
+
+    ItemStack recipeIcon(ManagedRecipe recipe, boolean admin, boolean blinkBarrier, String failure) {
         ItemStack result = recipe.result();
         List<Component> lore = new ArrayList<>();
-        boolean showBarrier = !recipe.enabled() && blinkBarrier;
+        boolean showBarrier = (!recipe.enabled() || failure != null) && blinkBarrier;
         if (showBarrier && result != null && result.getItemMeta() instanceof EnchantmentStorageMeta enchantments) {
             enchantments.getStoredEnchants().entrySet().stream()
                 .sorted(Comparator.comparing(entry -> entry.getKey().getKey().toString()))
@@ -1215,6 +1227,9 @@ public final class GuiManager implements Listener {
         lore.add(Component.text("Recipe info", NamedTextColor.AQUA).decorate(TextDecoration.BOLD).decoration(TextDecoration.ITALIC, false));
         lore.add(recipeInfoLine(recipe.kind().displayName()));
         lore.add(recipeInfoLine(recipe.enabled() ? "Enabled" : "Disabled - not craftable"));
+        if (recipe.enabled() && failure != null) {
+            lore.add(recipeInfoLine(failure));
+        }
         lore.add(recipeInfoLine(recipe.isOverride() ? "Overrides " + recipe.sourceKey() : "Custom recipe"));
         if (recipe.allowCrafters()) {
             lore.add(recipeInfoLine("Crafters allowed"));
@@ -1229,6 +1244,18 @@ public final class GuiManager implements Listener {
             return GuiUtil.namedCloneWithLore(new ItemStack(Material.BARRIER), resultName, lore);
         }
         return GuiUtil.namedCloneWithLore(result, resultName, lore);
+    }
+
+    private String craftingFailure(ManagedRecipe recipe, Player player) {
+        String failure = ConditionValidator.failureReason(recipe, player);
+        if (failure != null) return failure;
+        if (limitTracker != null) {
+            failure = limitTracker.check(recipe, player.getUniqueId(), 1);
+            if (failure != null) return failure;
+        }
+        var owner = registry.owner(recipe.id());
+        if (owner != null && !owner.available()) return "This recipe is currently unavailable.";
+        return owner == null ? null : owner.failure(player);
     }
 
     private Component recipeInfoLine(String line) {
@@ -1251,9 +1278,7 @@ public final class GuiManager implements Listener {
                 break;
             }
             ManagedRecipe recipe = recipes.get(index);
-            if (!recipe.enabled()) {
-                inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink));
-            }
+            inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink, craftingFailure(recipe, player)));
         }
     }
 
