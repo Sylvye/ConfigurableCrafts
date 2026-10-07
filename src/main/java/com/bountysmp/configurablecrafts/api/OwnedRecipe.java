@@ -7,6 +7,8 @@ import org.bukkit.inventory.ItemStack;
 public interface OwnedRecipe {
     boolean matches(ItemStack result);
     ItemStack preview();
+    /** Display-only output for this viewer; must not alter stored or crafted results. */
+    default ItemStack preview(Player viewer) { return preview().clone(); }
     /** Whether the output remains globally obtainable; separate from per-player validation. */
     default boolean available() { return true; }
     /** Null means permitted. Must not change game state. */

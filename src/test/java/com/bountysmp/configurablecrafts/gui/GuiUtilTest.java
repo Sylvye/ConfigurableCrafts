@@ -35,6 +35,52 @@ class GuiUtilTest extends BukkitTest {
         }
         @Override public NamedStack clone() { return new NamedStack(this); }
     }
+    private static class PreviewPolicy implements com.bountysmp.configurablecrafts.api.OwnedRecipe {
+        final ItemStack source;
+        PreviewPolicy(ItemStack source) { this.source = source; }
+        public boolean matches(ItemStack result) { return result.isSimilar(source); }
+        public ItemStack preview() { return source; }
+        public boolean available() { return false; }
+        public String failure(org.bukkit.entity.Player player) { return null; }
+        public ItemStack create(org.bukkit.entity.Player player) { return source.clone(); }
+        public void completed(org.bukkit.entity.Player player, ItemStack result) {}
+    }
+
+    @Test
+    void ownedViewerPreviewsConcealLoreInNormalAndBarrierIconsWithoutMutatingResults() throws Exception {
+        var source = new NamedStack(Material.DIAMOND);
+        source.editMeta(meta -> { meta.displayName(Component.text("Artifact")); meta.lore(List.of(Component.text("Secret ability"))); });
+        var masked = source.clone();
+        masked.editMeta(meta -> meta.lore(List.of(Component.text("????????").decorate(TextDecoration.OBFUSCATED))));
+        var recipe = new ManagedRecipe("owned", RecipeKind.SHAPED); recipe.setResult(source);
+        var viewer = org.mockbukkit.mockbukkit.MockBukkit.getMock().addPlayer();
+        var policy = new PreviewPolicy(source) {
+            @Override public ItemStack preview(org.bukkit.entity.Player viewer) { return masked.clone(); }
+        };
+        var registry = new com.bountysmp.configurablecrafts.crafting.ManagedRecipeRegistry(null, null);
+        var owners = registry.getClass().getDeclaredField("owned"); owners.setAccessible(true);
+        ((java.util.Map<String, com.bountysmp.configurablecrafts.api.OwnedRecipe>) owners.get(registry)).put("owned", policy);
+        var manager = new GuiManager(null, registry, null);
+        for (boolean barrier : List.of(false, true)) {
+            var preview = manager.recipeIcon(recipe, false, barrier, "Unavailable", viewer);
+            assertTrue(preview.lore().containsAll(masked.lore()));
+            assertTrue(preview.lore().stream().noneMatch(line -> PlainTextComponentSerializer.plainText().serialize(line).contains("Secret ability")));
+            assertTrue(preview.lore().stream().anyMatch(line -> PlainTextComponentSerializer.plainText().serialize(line).equals("Recipe info")));
+            assertEquals(source, recipe.result());
+        }
+        assertTrue(manager.recipeIcon(recipe, false, false).lore().containsAll(source.lore()));
+    }
+
+    @Test
+    void defaultOwnedViewerPreviewIsABackwardCompatibleClone() {
+        var source = new NamedStack(Material.DIAMOND);
+        source.editMeta(meta -> meta.lore(List.of(Component.text("Original"))));
+        var policy = new PreviewPolicy(source);
+        var preview = policy.preview(org.mockbukkit.mockbukkit.MockBukkit.getMock().addPlayer());
+        preview.editMeta(meta -> meta.lore(List.of(Component.text("Changed"))));
+        assertEquals(List.of(Component.text("Original")), source.lore());
+    }
+
     @Test
     void recipePreviewPreservesEnchantedBookLoreAboveRecipeInfo() {
         ItemStack book = new NamedStack(Material.ENCHANTED_BOOK);

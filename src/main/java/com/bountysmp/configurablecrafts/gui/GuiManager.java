@@ -121,7 +121,7 @@ public final class GuiManager implements Listener {
                 break;
             }
             ManagedRecipe recipe = recipes.get(index);
-            inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink, craftingFailure(recipe, player)));
+            inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink, craftingFailure(recipe, player), player));
         }
         inventory.setItem(45, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Previous Page", "Page " + (safePage + 1) + " / " + (maxPage + 1)));
         inventory.setItem(49, GuiUtil.item(Material.PAPER, GuiUtil.Tone.NEUTRAL, "Page " + (safePage + 1) + " / " + (maxPage + 1)));
@@ -878,7 +878,7 @@ public final class GuiManager implements Listener {
                 inventory.setItem(GRID_SLOTS[i], GuiUtil.isEmpty(ingredient) ? ingredientPlaceholder(session.recipe(), i) : displayIngredient(session, ingredient));
             }
         }
-        ItemStack result = session.result();
+        ItemStack result = previewResult(session.recipe(), player, session.result());
         inventory.setItem(RESULT_SLOT, GuiUtil.isEmpty(result) ? GuiUtil.item(Material.RED_STAINED_GLASS_PANE, GuiUtil.Tone.DANGER, "Result Slot", "Place the output item here.") : displayResult(session, result));
         VanillaBrewingCatalog.Entry vanillaBrewing = VanillaBrewingCatalog.bySourceKey(session.recipe().sourceKey());
         inventory.setItem(4, vanillaBrewing == null
@@ -1209,7 +1209,16 @@ public final class GuiManager implements Listener {
     }
 
     ItemStack recipeIcon(ManagedRecipe recipe, boolean admin, boolean blinkBarrier, String failure) {
-        ItemStack result = recipe.result();
+        return recipeIcon(recipe, admin, blinkBarrier, failure, null);
+    }
+
+    private ItemStack previewResult(ManagedRecipe recipe, Player viewer, ItemStack result) {
+        var owner = registry == null ? null : registry.owner(recipe.id());
+        return owner == null || viewer == null ? result : owner.preview(viewer).clone();
+    }
+
+    ItemStack recipeIcon(ManagedRecipe recipe, boolean admin, boolean blinkBarrier, String failure, Player viewer) {
+        ItemStack result = previewResult(recipe, viewer, recipe.result());
         List<Component> lore = new ArrayList<>();
         boolean showBarrier = (!recipe.enabled() || failure != null) && blinkBarrier;
         if (showBarrier && result != null && result.getItemMeta() instanceof EnchantmentStorageMeta enchantments) {
@@ -1278,7 +1287,7 @@ public final class GuiManager implements Listener {
                 break;
             }
             ManagedRecipe recipe = recipes.get(index);
-            inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink, craftingFailure(recipe, player)));
+            inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink, craftingFailure(recipe, player), player));
         }
     }
 
