@@ -321,6 +321,88 @@ class RecipeDiscoveryTest {
         assertNull(Bukkit.getRecipe(key(override)));
     }
 
+    @Test
+    void overrideEditUsesOnlyOneRemovalAndAdditionWithoutRestoringSource() {
+        ShapelessRecipe original = vanillaRecipe();
+        registry.cacheVanillaRecipes();
+        ManagedRecipe override = registry.fromVanilla(original);
+        registry.upsert(override);
+        server.additions.clear();
+        server.removals.clear();
+        int refreshes = server.refreshes;
+        override.setResult(new ItemStack(Material.EMERALD));
+
+        registry.upsert(override);
+
+        assertEquals(List.of(key(override)), server.removals);
+        assertEquals(List.of(key(override)), server.additions);
+        assertEquals(2, server.refreshes - refreshes);
+        assertEquals(0, server.explicitRefreshes);
+    }
+
+    @Test
+    void changingSourceRestoresOnlyThePreviousVanillaRecipe() {
+        ShapelessRecipe original = vanillaRecipe();
+        ShapelessRecipe next = new ShapelessRecipe(NamespacedKey.minecraft("next_source"),
+            new ItemStack(Material.EMERALD));
+        next.addIngredient(Material.DIAMOND);
+        Bukkit.addRecipe(next);
+        registry.cacheVanillaRecipes();
+        ManagedRecipe override = registry.fromVanilla(original);
+        registry.upsert(override);
+        override.setSourceKey(next.getKey().toString());
+
+        registry.upsert(override);
+
+        assertNotNull(Bukkit.getRecipe(original.getKey()));
+        assertNull(Bukkit.getRecipe(next.getKey()));
+        assertNotNull(Bukkit.getRecipe(key(override)));
+    }
+
+    @Test
+    void disabledVanillaKeysAreNeverPassedToRecipeBookAfterRemovalOrJoin() {
+        ShapelessRecipe original = vanillaRecipe();
+        registry.cacheVanillaRecipes();
+        ManagedRecipe override = registry.fromVanilla(original);
+        RecordingPlayer player = new RecordingPlayer(server);
+        server.addPlayer(player);
+        player.discoverRecipe(original.getKey());
+        registry.upsert(override);
+        registry.setEnabled(override.id(), false);
+
+        registry.syncPlayerRecipes(player);
+        server.getScheduler().performOneTick();
+        registry.setEnabled(override.id(), false);
+
+        assertTrue(player.getDiscoveredRecipes().isEmpty());
+        assertEquals(0, server.explicitRefreshes);
+    }
+
+    @Test
+    void availabilityStartupAndShutdownDoNotExplicitlyResendRecipes() {
+        ShapelessRecipe original = vanillaRecipe();
+        registry.cacheVanillaRecipes();
+        ManagedRecipe override = registry.fromVanilla(original);
+        repository.save(List.of(override, recipe("custom", RecipeKind.SHAPED)));
+        RecordingPlayer player = new RecordingPlayer(server);
+        server.addPlayer(player);
+        registry.load();
+        registry.applyAll();
+        registry.allowance(recipe -> false);
+        registry.refreshAvailability();
+        registry.syncPlayerRecipes(player);
+        registry.refreshAvailability();
+        assertTrue(player.getDiscoveredRecipes().isEmpty());
+        registry.allowance(recipe -> true);
+        registry.refreshAvailability();
+        assertEquals(2, player.getDiscoveredRecipes().size());
+
+        registry.shutdown();
+
+        assertEquals(Set.of(original.getKey()), player.getDiscoveredRecipes());
+        assertEquals(0, server.explicitRefreshes);
+    }
+
     private ManagedRecipe recipe(String id, RecipeKind kind) {
         ManagedRecipe recipe = new ManagedRecipe(id, kind);
         recipe.setResult(new ItemStack(Material.DIAMOND));
@@ -356,14 +438,34 @@ class RecipeDiscoveryTest {
     private static final class RecipeServerMock extends ServerMock {
         private boolean rejectRecipes;
         private int refreshes;
+        private int explicitRefreshes;
+        private final List<NamespacedKey> additions = new java.util.ArrayList<>();
+        private final List<NamespacedKey> removals = new java.util.ArrayList<>();
 
         @Override
         public boolean addRecipe(Recipe recipe, boolean resendRecipes) {
-            return !rejectRecipes && super.addRecipe(recipe, resendRecipes);
+            boolean added = !rejectRecipes && super.addRecipe(recipe, resendRecipes);
+            if (added) {
+                additions.add(((org.bukkit.Keyed) recipe).getKey());
+                refreshes++; // Paper 26.2 refreshes even when resendRecipes is false.
+            }
+            return added;
+        }
+
+        @Override
+        public boolean removeRecipe(NamespacedKey key, boolean resendRecipes) {
+            assertNotNull(getRecipe(key), "Do not remove absent recipes");
+            boolean removed = super.removeRecipe(key, resendRecipes);
+            if (removed) {
+                removals.add(key);
+                refreshes++;
+            }
+            return removed;
         }
 
         @Override
         public void updateRecipes() {
+            explicitRefreshes++;
             refreshes++;
             super.updateRecipes();
         }
@@ -381,10 +483,17 @@ class RecipeDiscoveryTest {
 
         @Override
         public int discoverRecipes(Collection<NamespacedKey> recipes) {
+            recipes.forEach(key -> assertNotNull(Bukkit.getRecipe(key), "Discover only registered recipes"));
             int discovered = super.discoverRecipes(recipes);
             newDiscoveries += discovered;
             lastDiscoveryRefresh = server.refreshes;
             return discovered;
+        }
+
+        @Override
+        public int undiscoverRecipes(Collection<NamespacedKey> recipes) {
+            recipes.forEach(key -> assertNotNull(Bukkit.getRecipe(key), "Forget only registered recipes"));
+            return super.undiscoverRecipes(recipes);
         }
 
         @Override

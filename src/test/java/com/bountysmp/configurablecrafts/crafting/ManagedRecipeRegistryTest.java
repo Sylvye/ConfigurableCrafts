@@ -234,8 +234,8 @@ class ManagedRecipeRegistryTest extends BukkitTest {
         registry.upsert(recipe);
 
         assertEquals(2, potionMixes.added.size());
-        assertEquals(3, potionMixes.removed.size());
-        assertEquals(List.of("recipe/valid_brew", "recipe/valid_brew", "recipe/valid_brew"), potionMixes.removed.stream().map(NamespacedKey::getKey).toList());
+        assertEquals(2, potionMixes.removed.size());
+        assertEquals(List.of("recipe/valid_brew", "recipe/valid_brew"), potionMixes.removed.stream().map(NamespacedKey::getKey).toList());
     }
 
     @Test

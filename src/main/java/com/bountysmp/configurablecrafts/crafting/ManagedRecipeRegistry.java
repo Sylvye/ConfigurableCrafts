@@ -312,7 +312,9 @@ public final class ManagedRecipeRegistry {
         NamespacedKey restoredSource = null;
         if (previous != null) {
             unregisterManaged(previous);
-            restoredSource = restoreSource(previous);
+            if (!java.util.Objects.equals(previous.sourceKey(), recipe.sourceKey())) {
+                restoredSource = restoreSource(previous);
+            }
         }
         recipes.put(recipe.id(), recipe.copy());
         RuntimeException failure = null;
@@ -327,11 +329,10 @@ public final class ManagedRecipeRegistry {
                 ManagedRecipe blocked = current.copy();
                 blocked.setEnabled(false);
                 recipes.put(blocked.id(), blocked);
-                apply(blocked);
             }
         }
         // The owner may change availability while handling the toggle.
-        apply(recipes.get(recipe.id()));
+        apply(recipes.get(recipe.id()), previous == null);
         try {
             save();
         } catch (RuntimeException ex) {
@@ -375,7 +376,11 @@ public final class ManagedRecipeRegistry {
     }
 
     private void apply(ManagedRecipe recipe) {
-        unregisterManaged(recipe);
+        apply(recipe, true);
+    }
+
+    private void apply(ManagedRecipe recipe, boolean unregisterPrevious) {
+        if (unregisterPrevious) unregisterManaged(recipe);
         exhausted.remove(recipe.id());
         if (!recipe.enabled()) {
             // Keep tombstones so already prepared crafts and in-progress cooking are rejected.
@@ -444,10 +449,9 @@ public final class ManagedRecipeRegistry {
     }
 
     private void unregisterBukkitRecipe(NamespacedKey key) {
-        if (Bukkit.getRecipe(key) != null) {
-            for (Player player : Bukkit.getOnlinePlayers()) {
-                player.undiscoverRecipe(key);
-            }
+        if (Bukkit.getRecipe(key) == null) return;
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            player.undiscoverRecipe(key);
         }
         Bukkit.removeRecipe(key, true);
     }
@@ -855,7 +859,8 @@ public final class ManagedRecipeRegistry {
             .flatMap(recipe -> recipe.sourceKey() == null
                 ? java.util.stream.Stream.of(recipe.managedKey(plugin))
                 : java.util.stream.Stream.of(recipe.managedKey(plugin), NamespacedKey.fromString(recipe.sourceKey())))
-            .filter(java.util.Objects::nonNull).toList();
+            .filter(java.util.Objects::nonNull)
+            .filter(key -> Bukkit.getRecipe(key) != null).distinct().toList();
         if (!hidden.isEmpty()) player.undiscoverRecipes(hidden);
         List<NamespacedKey> keys = managedKeys.entrySet().stream()
             .filter(entry -> {
@@ -871,7 +876,8 @@ public final class ManagedRecipeRegistry {
     }
 
     private void refreshPlayers(NamespacedKey... restoredSources) {
-        Bukkit.updateRecipes();
+        // Paper 26.2 synchronizes successful additions/removals itself, even when
+        // resendRecipes is false. Another update here resends the entire recipe book.
         List<NamespacedKey> restoredKeys = new ArrayList<>();
         for (NamespacedKey key : restoredSources) {
             if (key != null && Bukkit.getRecipe(key) != null) {
