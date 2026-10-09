@@ -9,6 +9,8 @@ ConfigurableCrafts is a Paper plugin for managing custom and overridden crafting
 - Configure brewing, furnace-like cooking, stonecutting, and smithing recipes.
 - Configure ingredient matching and recipe result items from in-game item stacks.
 - Restrict recipes by dimension, biome, weather, and minimum experience level.
+- Admin right-click recipe entries to toggle enabled state; left-click edits and shift-right-click removes/reverts. Disabled recipes are hidden from normal lists, search and discovery; admins can re-enable them through the Disabled filter.
+- Plugin-owned recipe toggles notify their owner through the backward-compatible `OwnedRecipe.enabledChanged(boolean)` callback. `ManagedRecipeRegistry.setEnabled(id, enabled)` persists and refreshes the recipe; disabled cached events remain recognizable and are rejected.
 - Persist managed recipes to `plugins/ConfigurableCrafts/recipes.yml`.
 
 ## Requirements

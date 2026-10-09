@@ -82,6 +82,7 @@ public final class GuiManager implements Listener {
     private final Map<UUID, EditorSession> editorSessions = new ConcurrentHashMap<>();
     private BukkitTask blinkTask;
     private boolean disabledBlink;
+    private boolean refreshQueued;
 
     public GuiManager(Plugin plugin, ManagedRecipeRegistry registry, ChatPromptManager prompts) {
         this(plugin, registry, prompts, null);
@@ -92,6 +93,33 @@ public final class GuiManager implements Listener {
         this.plugin = plugin;
         this.registry = registry;
         this.prompts = prompts;
+        if (registry != null) registry.onChange(this::refreshViews);
+    }
+
+    public void refreshViews() {
+        if (refreshQueued) return;
+        refreshQueued = true;
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            refreshQueued = false;
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                OpenMenu open = openMenus.get(player.getUniqueId());
+                if (open == null || !isCurrentMenu(player.getOpenInventory().getTopInventory(), open)) continue;
+                if (open.screen == Screen.MAIN) openMain(player, open.page, open.query, open.filter);
+                else if (open.screen == Screen.BREWING_LIST) openBrewingList(player, open.page);
+                else if (open.screen == Screen.VANILLA_LIST && isAdmin(player)) openVanillaList(player, open.page, open.query);
+                else {
+                    EditorSession session = editorSessions.get(player.getUniqueId());
+                    ManagedRecipe current = open.recipeId == null ? null : registry.byId(open.recipeId);
+                    if (current != null && !current.enabled() && !isAdmin(player)) {
+                        releaseEditor(player);
+                        player.closeInventory();
+                    } else if (session != null) {
+                        session.syncEnabled(current);
+                        if (open.screen == Screen.EDITOR) renderEditor(player, session, open.inventory);
+                    }
+                }
+            }
+        });
     }
 
     public void openMain(Player player, int page, String query) {
@@ -100,6 +128,7 @@ public final class GuiManager implements Listener {
 
     public void openMain(Player player, int page, String query, RecipeListFilter filter) {
         boolean admin = isAdmin(player);
+        if (!admin && filter == RecipeListFilter.DISABLED) filter = RecipeListFilter.ALL;
         Inventory inventory = Bukkit.createInventory(player, 54, admin ? "ConfigurableCrafts" : "Custom Recipes");
         fill(inventory);
         if (admin) {
@@ -110,9 +139,10 @@ public final class GuiManager implements Listener {
         } else {
             inventory.setItem(13, GuiUtil.item(Material.BREWING_STAND, GuiUtil.Tone.INFO, "Brewing Changes", "See changed potion recipes."));
         }
-        inventory.setItem(MAIN_FILTER_SLOT, filterItem(filter));
+        inventory.setItem(MAIN_FILTER_SLOT, admin ? filterItem(filter)
+            : GuiUtil.item(Material.HOPPER, GuiUtil.Tone.WARNING, "Filter: " + filter.displayName(), "Click to cycle enabled recipes."));
 
-        List<ManagedRecipe> recipes = filteredManagedRecipes(query, filter);
+        List<ManagedRecipe> recipes = filteredManagedRecipes(player, query, filter);
         int maxPage = maxPage(recipes.size(), MAIN_LIST_SLOTS.length);
         int safePage = clampPage(page, maxPage);
         for (int i = 0; i < MAIN_LIST_SLOTS.length; i++) {
@@ -127,7 +157,8 @@ public final class GuiManager implements Listener {
         inventory.setItem(49, GuiUtil.item(Material.PAPER, GuiUtil.Tone.NEUTRAL, "Page " + (safePage + 1) + " / " + (maxPage + 1)));
         inventory.setItem(53, GuiUtil.item(Material.ARROW, GuiUtil.Tone.WARNING, "Next Page", "Page " + (safePage + 1) + " / " + (maxPage + 1)));
         player.openInventory(inventory);
-        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.MAIN, safePage, query, null, filter, inventory));
+        openMenus.put(player.getUniqueId(), new OpenMenu(Screen.MAIN, safePage, query, null, filter, inventory,
+            recipes.stream().map(ManagedRecipe::id).toList()));
     }
 
     public void startBlinkTask() {
@@ -256,7 +287,9 @@ public final class GuiManager implements Listener {
             return;
         }
         if (slot == MAIN_FILTER_SLOT) {
-            openMain(player, 0, open.query, open.filter.next());
+            RecipeListFilter next = open.filter.next();
+            if (!admin && next == RecipeListFilter.DISABLED) next = RecipeListFilter.ALL;
+            openMain(player, 0, open.query, next);
             return;
         }
         if (slot == 45) {
@@ -271,17 +304,34 @@ public final class GuiManager implements Listener {
         if (listIndex < 0) {
             return;
         }
-        List<ManagedRecipe> recipes = filteredManagedRecipes(open.query, open.filter);
         int recipeIndex = open.page * MAIN_LIST_SLOTS.length + listIndex;
-        if (recipeIndex >= recipes.size()) {
+        if (recipeIndex >= open.recipeIds.size()) return;
+        ManagedRecipe recipe = registry.byId(open.recipeIds.get(recipeIndex));
+        if (recipe == null || recipe.enabled() == (open.filter == RecipeListFilter.DISABLED)) {
+            openMain(player, open.page, open.query, open.filter);
             return;
         }
-        ManagedRecipe recipe = recipes.get(recipeIndex);
         if (admin && click.isShiftClick() && click.isRightClick()) {
             openConfirmRemove(player, recipe.id());
             return;
         }
+        if (admin && click == ClickType.RIGHT) {
+            toggleRecipe(player, recipe);
+            return;
+        }
         openEditor(player, new EditorSession(recipe, !admin));
+    }
+
+    private void toggleRecipe(Player player, ManagedRecipe recipe) {
+        if (!isAdmin(player)) return;
+        try {
+            registry.setEnabled(recipe.id(), !recipe.enabled());
+            player.sendMessage("Recipe " + (registry.byId(recipe.id()).enabled() ? "enabled." : "disabled."));
+        } catch (RuntimeException ex) {
+            player.sendMessage("Could not finish recipe toggle: " + ex.getMessage());
+            plugin.getLogger().log(java.util.logging.Level.SEVERE, "Recipe toggle failed", ex);
+            refreshViews();
+        }
     }
 
     private void handleTypePickerClick(Player player, int slot) {
@@ -321,7 +371,7 @@ public final class GuiManager implements Listener {
             return;
         }
         int listIndex = indexOf(VANILLA_LIST_SLOTS, slot);
-        if (listIndex < 0 || !click.isLeftClick()) {
+        if (listIndex < 0 || !click.isLeftClick() && !click.isRightClick()) {
             return;
         }
         List<Recipe> recipes = filteredVanilla(open.query);
@@ -332,6 +382,18 @@ public final class GuiManager implements Listener {
         Recipe vanilla = recipes.get(recipeIndex);
         NamespacedKey sourceKey = registry.keyOf(vanilla);
         ManagedRecipe existing = findOverride(sourceKey);
+        if (click.isShiftClick() && click.isRightClick()) {
+            if (existing != null) openConfirmRemove(player, existing.id());
+            return;
+        }
+        if (click == ClickType.RIGHT) {
+            if (existing == null) {
+                existing = registry.fromVanilla(vanilla);
+                registry.upsert(existing);
+            }
+            toggleRecipe(player, existing);
+            return;
+        }
         openEditor(player, new EditorSession(existing == null ? registry.fromVanilla(vanilla) : existing, false));
     }
 
@@ -363,12 +425,21 @@ public final class GuiManager implements Listener {
         int listIndex = indexOf(VANILLA_LIST_SLOTS, slot);
         List<VanillaBrewingCatalog.Entry> entries = visibleBrewingEntries(player);
         int index = open.page * VANILLA_LIST_SLOTS.length + listIndex;
-        if (listIndex < 0 || index < 0 || index >= entries.size() || !click.isLeftClick()) {
+        if (listIndex < 0 || index < 0 || index >= entries.size() || !click.isLeftClick() && !click.isRightClick()) {
             return;
         }
         VanillaBrewingCatalog.Entry entry = entries.get(index);
         ManagedRecipe override = registry.vanillaBrewingOverride(entry.sourceKey());
         ManagedRecipe recipe = override == null ? entry.toManagedRecipe() : override;
+        if (isAdmin(player) && click.isShiftClick() && click.isRightClick()) {
+            if (override != null) openConfirmRemove(player, override.id());
+            return;
+        }
+        if (isAdmin(player) && click == ClickType.RIGHT) {
+            if (override == null) registry.upsert(recipe);
+            toggleRecipe(player, recipe);
+            return;
+        }
         openEditor(player, new EditorSession(recipe, !isAdmin(player)));
     }
 
@@ -598,7 +669,7 @@ public final class GuiManager implements Listener {
     private void handleConditionClick(Player player, EditorSession session, int slot) {
         RecipeConditions conditions = session.recipe().conditions();
         if (slot == 14) {
-            session.recipe().setEnabled(!session.recipe().enabled());
+            session.toggleEnabled();
         } else if (slot == 15) {
             promptEditor(player, session, "Type comma-separated dimensions, e.g. minecraft:overworld. Type clear to allow any dimension.", text -> {
                 if (!text.equalsIgnoreCase("cancel")) {
@@ -741,6 +812,7 @@ public final class GuiManager implements Listener {
             player.closeInventory();
             return;
         }
+        session.syncEnabled(registry.byId(session.recipe().id()));
         session.applyItemsToRecipe();
         normalizeActiveIngredients(session.recipe());
         normalizeVanillaBrewingInput(session.recipe());
@@ -752,7 +824,14 @@ public final class GuiManager implements Listener {
         session.releaseOwnedItems(player);
         editorSessions.remove(player.getUniqueId());
         openMenus.remove(player.getUniqueId());
-        registry.upsert(session.recipe());
+        try {
+            registry.upsert(session.recipe());
+        } catch (RuntimeException ex) {
+            player.sendMessage("Could not finish saving recipe: " + ex.getMessage());
+            plugin.getLogger().log(java.util.logging.Level.SEVERE, "Recipe save failed", ex);
+            player.closeInventory();
+            return;
+        }
         player.sendMessage("Recipe saved.");
         for (String warning : registry.warningsForSave(session.recipe())) {
             player.sendMessage(warning);
@@ -789,10 +868,12 @@ public final class GuiManager implements Listener {
             }
             Recipe recipe = recipes.get(index);
             NamespacedKey key = registry.keyOf(recipe);
+            var override = findOverride(key);
             inventory.setItem(VANILLA_LIST_SLOTS[i], GuiUtil.namedClone(recipe.getResult(), ItemText.displayName(recipe.getResult()), GuiUtil.Tone.INFO, List.of(
                 key == null ? "Unknown key" : key.toString(),
                 recipe.getClass().getSimpleName(),
-                "Left-click to edit."
+                override == null || override.enabled() ? "Enabled" : "Disabled",
+                "Left-click edit; right-click toggle."
             )));
         }
         inventory.setItem(45, GuiUtil.item(Material.BARRIER, GuiUtil.Tone.DANGER, "Back"));
@@ -820,9 +901,10 @@ public final class GuiManager implements Listener {
             ManagedRecipe override = registry.vanillaBrewingOverride(entry.sourceKey());
             ManagedRecipe shown = override == null ? entry.toManagedRecipe() : override;
             List<String> lore = new ArrayList<>();
+            lore.add(shown.enabled() ? "Enabled" : "Disabled");
             lore.add(brewingRecipeLine(shown));
             lore.add(override == null ? "Vanilla" : "Changed from: " + brewingRecipeLine(entry.toManagedRecipe()));
-            lore.add(admin ? "Left-click to edit." : "Left-click to view.");
+            lore.add(admin ? "Left-click edit; right-click toggle." : "Left-click to view.");
             inventory.setItem(VANILLA_LIST_SLOTS[i], GuiUtil.namedClone(shown.result(), entry.displayName(),
                 override == null ? GuiUtil.Tone.NEUTRAL : GuiUtil.Tone.INFO, lore));
         }
@@ -852,7 +934,8 @@ public final class GuiManager implements Listener {
 
     public void openRecipe(Player player, String id) {
         ManagedRecipe recipe = registry.byId(id);
-        if (recipe != null) openEditor(player, new EditorSession(recipe.copy(), !isAdmin(player)));
+        if (recipe != null && (recipe.enabled() || isAdmin(player)))
+            openEditor(player, new EditorSession(recipe.copy(), !isAdmin(player)));
     }
 
     private void openEditor(Player player, EditorSession session) {
@@ -1156,13 +1239,13 @@ public final class GuiManager implements Listener {
             .toList();
     }
 
-    private List<ManagedRecipe> filteredManagedRecipes(String query, RecipeListFilter filter) {
+    private List<ManagedRecipe> filteredManagedRecipes(Player player, String query, RecipeListFilter filter) {
         String lower = query == null ? "" : query.toLowerCase(Locale.ROOT);
         return registry.recipes().stream()
             .filter(recipe -> switch (filter) {
-                case ALL -> true;
+                case ALL -> recipe.enabled();
                 case CUSTOM -> recipe.enabled();
-                case DISABLED -> !recipe.enabled();
+                case DISABLED -> isAdmin(player) && !recipe.enabled();
             })
             .filter(recipe -> lower.isBlank()
                 || recipe.displayLabel().toLowerCase(Locale.ROOT).contains(lower)
@@ -1247,7 +1330,8 @@ public final class GuiManager implements Listener {
         addLimitLore(limits, "Per-player", recipe.playerLimit());
         addLimitLore(limits, "Global", recipe.globalLimit());
         limits.forEach(line -> lore.add(recipeInfoLine(line)));
-        lore.add(recipeInfoLine(admin ? "Left-click edit. Shift-right-click delete/revert." : "Left-click view."));
+        lore.add(recipeInfoLine(admin ? "Left-click edit. Right-click toggle." : "Left-click view."));
+        if (admin) lore.add(recipeInfoLine("Shift-right-click delete/revert."));
         Component resultName = exactResultName(result);
         if (showBarrier) {
             return GuiUtil.namedCloneWithLore(new ItemStack(Material.BARRIER), resultName, lore);
@@ -1279,14 +1363,13 @@ public final class GuiManager implements Listener {
     }
 
     private void renderMainRecipeIcons(Player player, OpenMenu open, Inventory inventory) {
-        List<ManagedRecipe> recipes = filteredManagedRecipes(open.query, open.filter);
         boolean admin = isAdmin(player);
+        for (int slot : MAIN_LIST_SLOTS) inventory.setItem(slot, GuiUtil.filler());
         for (int i = 0; i < MAIN_LIST_SLOTS.length; i++) {
             int index = open.page * MAIN_LIST_SLOTS.length + i;
-            if (index >= recipes.size()) {
-                break;
-            }
-            ManagedRecipe recipe = recipes.get(index);
+            if (index >= open.recipeIds.size()) break;
+            ManagedRecipe recipe = registry.byId(open.recipeIds.get(index));
+            if (recipe == null || recipe.enabled() == (open.filter == RecipeListFilter.DISABLED)) continue;
             inventory.setItem(MAIN_LIST_SLOTS[i], recipeIcon(recipe, admin, disabledBlink, craftingFailure(recipe, player), player));
         }
     }
@@ -1527,7 +1610,11 @@ public final class GuiManager implements Listener {
         CONFIRM_REMOVE
     }
 
-    private record OpenMenu(Screen screen, int page, String query, String recipeId, RecipeListFilter filter, Inventory inventory) {
+    private record OpenMenu(Screen screen, int page, String query, String recipeId, RecipeListFilter filter,
+                            Inventory inventory, List<String> recipeIds) {
+        OpenMenu(Screen screen, int page, String query, String recipeId, RecipeListFilter filter, Inventory inventory) {
+            this(screen, page, query, recipeId, filter, inventory, List.of());
+        }
     }
 
     private record WorkstationOption(int slot, Material material, RecipeKind kind, String name, String description) {

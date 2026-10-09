@@ -72,9 +72,9 @@ public final class CraftingListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onCrafterCraft(CrafterCraftEvent event) {
         ManagedRecipe recipe = registry.byManagedKey(event.getRecipe().getKey());
-        if (recipe != null && !recipe.allowCrafters()) {
+        if (recipe != null && (!recipe.enabled() || !recipe.allowCrafters())) {
             event.setCancelled(true);
-            event.setResult(null);
+            event.setResult(new ItemStack(Material.AIR));
         }
     }
 
@@ -96,6 +96,8 @@ public final class CraftingListener implements Listener {
         var gate = new com.bountysmp.configurablecrafts.api.OwnedCraftEvent(player, recipe.id());
         plugin.getServer().getPluginManager().callEvent(gate);
         if (gate.isCancelled()) return;
+        var current = registry.byId(recipe.id());
+        if (current == null || !current.enabled() || policy.failure(player) != null) return;
         ItemStack output = null;
         try {
             output = policy.create(player);

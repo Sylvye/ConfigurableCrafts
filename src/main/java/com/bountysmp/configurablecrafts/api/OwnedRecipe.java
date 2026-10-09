@@ -11,6 +11,8 @@ public interface OwnedRecipe {
     default ItemStack preview(Player viewer) { return preview().clone(); }
     /** Whether the output remains globally obtainable; separate from per-player validation. */
     default boolean available() { return true; }
+    /** Called when a persisted recipe changes enabled state; failures leave acquisition blocked. */
+    default void enabledChanged(boolean enabled) {}
     /** Null means permitted. Must not change game state. */
     String failure(Player player);
     /** Create and durably record a unique result, before taking ingredients. */

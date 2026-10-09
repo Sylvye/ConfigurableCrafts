@@ -189,7 +189,9 @@ public final class ManagedRecipeRegistry {
 
     public ManagedRecipe byManagedKey(NamespacedKey key) {
         String id = managedKeys.get(key);
-        return id == null ? null : recipes.get(id);
+        if (id != null) return recipes.get(id);
+        return recipes.values().stream()
+            .filter(recipe -> key.toString().equals(recipe.sourceKey())).findFirst().orElse(null);
     }
 
     public List<Recipe> vanillaRecipeList() {
@@ -292,6 +294,18 @@ public final class ManagedRecipeRegistry {
         return warnings;
     }
 
+    private final List<Runnable> changeListeners = new ArrayList<>();
+
+    public void onChange(Runnable listener) { changeListeners.add(listener); }
+
+    public void setEnabled(String id, boolean enabled) {
+        ManagedRecipe current = byId(id);
+        if (current == null) throw new IllegalArgumentException("Unknown recipe: " + id);
+        ManagedRecipe changed = current.copy();
+        changed.setEnabled(enabled);
+        upsert(changed);
+    }
+
     public void upsert(ManagedRecipe recipe) {
         enforceOwned(recipe);
         ManagedRecipe previous = recipes.get(recipe.id());
@@ -301,15 +315,52 @@ public final class ManagedRecipeRegistry {
             restoredSource = restoreSource(previous);
         }
         recipes.put(recipe.id(), recipe.copy());
-        apply(recipe);
-        save();
-        refreshPlayers(restoredSource);
+        RuntimeException failure = null;
+        try {
+            var policy = owner(recipe.id());
+            if (policy != null && previous != null && previous.enabled() != recipe.enabled())
+                policy.enabledChanged(recipe.enabled());
+        } catch (RuntimeException ex) {
+            failure = ex;
+            ManagedRecipe current = recipes.get(recipe.id());
+            if (current != null && current.enabled()) {
+                ManagedRecipe blocked = current.copy();
+                blocked.setEnabled(false);
+                recipes.put(blocked.id(), blocked);
+                apply(blocked);
+            }
+        }
+        // The owner may change availability while handling the toggle.
+        apply(recipes.get(recipe.id()));
+        try {
+            save();
+        } catch (RuntimeException ex) {
+            if (failure == null) failure = ex;
+            else failure.addSuppressed(ex);
+            // An unsaved enable must never make an item obtainable.
+            ManagedRecipe current = recipes.get(recipe.id());
+            if (current != null && current.enabled()) {
+                ManagedRecipe blocked = current.copy();
+                blocked.setEnabled(false);
+                recipes.put(blocked.id(), blocked);
+                apply(blocked);
+                var policy = owner(blocked.id());
+                if (policy != null) {
+                    try { policy.enabledChanged(false); }
+                    catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+                }
+            }
+        } finally {
+            refreshPlayers(restoredSource);
+            changeListeners.forEach(Runnable::run);
+        }
+        if (failure != null) throw failure;
     }
 
     public void removeOrRevert(String id) {
         if (owner(id) != null) {
             ManagedRecipe existing = byId(id);
-            if (existing != null) { existing.setEnabled(false); upsert(existing); }
+            if (existing != null) setEnabled(id, false);
             return;
         }
         ManagedRecipe recipe = recipes.remove(id);
@@ -327,6 +378,11 @@ public final class ManagedRecipeRegistry {
         unregisterManaged(recipe);
         exhausted.remove(recipe.id());
         if (!recipe.enabled()) {
+            // Keep tombstones so already prepared crafts and in-progress cooking are rejected.
+            managedKeys.put(recipe.managedKey(plugin), recipe.id());
+            if (VanillaBrewingCatalog.isOverride(recipe))
+                for (Material material : potionContainers())
+                    managedKeys.put(potionMixKey(recipe, material), recipe.id());
             if (recipe.sourceKey() != null) {
                 NamespacedKey sourceKey = NamespacedKey.fromString(recipe.sourceKey());
                 if (sourceKey != null) {
@@ -794,6 +850,13 @@ public final class ManagedRecipeRegistry {
     }
 
     public void syncPlayerRecipes(Player player) {
+        List<NamespacedKey> hidden = recipes.values().stream()
+            .filter(recipe -> !recipe.enabled() || !available(recipe))
+            .flatMap(recipe -> recipe.sourceKey() == null
+                ? java.util.stream.Stream.of(recipe.managedKey(plugin))
+                : java.util.stream.Stream.of(recipe.managedKey(plugin), NamespacedKey.fromString(recipe.sourceKey())))
+            .filter(java.util.Objects::nonNull).toList();
+        if (!hidden.isEmpty()) player.undiscoverRecipes(hidden);
         List<NamespacedKey> keys = managedKeys.entrySet().stream()
             .filter(entry -> {
                 ManagedRecipe recipe = recipes.get(entry.getValue());

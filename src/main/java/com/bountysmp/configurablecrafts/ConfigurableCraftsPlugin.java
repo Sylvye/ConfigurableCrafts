@@ -38,6 +38,7 @@ public class ConfigurableCraftsPlugin extends JavaPlugin {
             throw new IllegalArgumentException("Recipe owner mismatch");
         var recipe = recipeRegistry.byId(id);
         if (recipe == null) throw new IllegalArgumentException("Unknown owned recipe");
+        if (!recipe.enabled()) return "This recipe is disabled.";
         return craftLimitTracker.tryConsume(recipe, playerId, 1);
     }
     public void openRecipe(org.bukkit.entity.Player player, String id) { guiManager.openRecipe(player, id); }

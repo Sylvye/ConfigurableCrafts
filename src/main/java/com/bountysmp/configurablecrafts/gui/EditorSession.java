@@ -17,6 +17,7 @@ final class EditorSession {
     private boolean readOnly;
     private boolean suspended;
     private boolean blink;
+    private boolean enabledEdited;
     private int tagCycle;
 
     EditorSession(ManagedRecipe recipe, boolean readOnly) {
@@ -29,6 +30,15 @@ final class EditorSession {
             }
         }
         result = this.recipe.result();
+    }
+
+    void toggleEnabled() {
+        enabledEdited = true;
+        recipe.setEnabled(!recipe.enabled());
+    }
+
+    void syncEnabled(ManagedRecipe current) {
+        if (!enabledEdited && current != null) recipe.setEnabled(current.enabled());
     }
 
     ManagedRecipe recipe() {

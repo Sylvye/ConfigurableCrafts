@@ -248,7 +248,8 @@ class RecipeDiscoveryTest {
 
         assertTrue(player.getDiscoveredRecipes().isEmpty());
         assertNull(registry.byManagedKey(key(invalid)));
-        assertNull(registry.byManagedKey(key(disabled)));
+        assertNotNull(registry.byManagedKey(key(disabled)), "disabled cached events retain their validation tombstone");
+        assertFalse(registry.byManagedKey(key(disabled)).enabled());
         assertNotNull(registry.byManagedKey(key(brewing)));
     }
 

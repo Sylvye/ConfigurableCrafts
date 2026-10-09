@@ -3,13 +3,14 @@ plugins {
 }
 
 group = "com.bountysmp"
-version = "0.2.1"
+version = "0.2.3"
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:26.2.build.129-stable")
 
     testImplementation("io.papermc.paper:paper-api:26.2.build.129-stable")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation("org.mockito:mockito-core:5.21.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
     testImplementation("org.mockbukkit.mockbukkit:mockbukkit-v26.2:4.116.1") {
         exclude(group = "org.junit.jupiter")

@@ -67,7 +67,13 @@ public final class BrewingRecipeService implements Listener {
                 }
                 continue;
             }
-            if (blockedOriginal(input, ingredient) != null) {
+            boolean disabledCustom = !canBrew(input, ingredient)
+                && registry.recipes().stream().anyMatch(recipe -> !recipe.enabled()
+                    && recipe.kind().canonical() == RecipeKind.BREWING
+                    && !VanillaBrewingCatalog.isOverride(recipe)
+                    && IngredientMatcher.matches(recipe.ingredient(0), input)
+                    && IngredientMatcher.matches(recipe.ingredient(1), ingredient));
+            if (blockedOriginal(input, ingredient) != null || disabledCustom) {
                 event.getResults().set(i, input == null ? null : input.clone());
             }
         }
